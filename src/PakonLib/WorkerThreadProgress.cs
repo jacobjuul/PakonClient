@@ -76,7 +76,7 @@ namespace PakonLib
             return result;
         }
 
-        public override string ToString() => DisplayName;
+        public override string ToString() => IsDefined ? DisplayName : "Unknown (" + RawValue + ")";
 
         public bool Equals(WorkerThreadProgress other) => _value == other._value;
 

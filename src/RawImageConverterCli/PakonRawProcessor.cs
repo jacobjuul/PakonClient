@@ -18,8 +18,14 @@ internal sealed class PakonRawProcessor
             fileStream.ReadExactly(header, 0, 16);
             width = (int)BitConverter.ToUInt32(header, 4);
             height = (int)BitConverter.ToUInt32(header, 8);
+            var bitCount = BitConverter.ToUInt32(header, 12);
 
-            if (width > 5000 || height > 5000)
+            if (width <= 0 || height <= 0)
+            {
+                throw new InvalidOperationException("Pakon raw file has invalid dimensions " + width + "x" + height + ".");
+            }
+
+            if (width > 5000 || height > 5000 || bitCount != 48)
             {
                 throw new InvalidOperationException("You are probably not processing a Pakon raw file.");
             }

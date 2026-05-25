@@ -79,12 +79,17 @@ namespace ConsoleClient
             }
         }
 
-        public void Convert(byte[] data, string outputPath, RawOutputFormat outputFormat, bool isBwImage, double gamma, float contrast, float saturation, int quality)
+        public RawConversionTiming Convert(byte[] data, string outputPath, RawOutputFormat outputFormat, bool isBwImage, double gamma, float contrast, float saturation, int quality)
         {
+            var total = Stopwatch.StartNew();
+
             if (outputFormat == RawOutputFormat.Raw)
             {
+                var write = Stopwatch.StartNew();
                 File.WriteAllBytes(outputPath, data);
-                return;
+                write.Stop();
+                total.Stop();
+                return RawConversionTiming.ForRawWrite(total.Elapsed, write.Elapsed);
             }
 
             if (!File.Exists(executablePath))
@@ -103,25 +108,59 @@ namespace ConsoleClient
                 CreateNoWindow = true
             };
 
-            using (var process = Process.Start(startInfo))
+            Process process;
+            var start = Stopwatch.StartNew();
+            using (process = Process.Start(startInfo))
             {
+                start.Stop();
                 if (process == null)
                 {
                     throw new CommandException("Failed to start raw converter executable '" + executablePath + "'.");
                 }
 
+                var input = Stopwatch.StartNew();
                 process.StandardInput.BaseStream.Write(data, 0, data.Length);
                 process.StandardInput.Close();
+                input.Stop();
+
+                var wait = Stopwatch.StartNew();
                 var output = process.StandardOutput.ReadToEnd();
                 var error = process.StandardError.ReadToEnd();
                 process.WaitForExit();
+                wait.Stop();
+                total.Stop();
 
                 if (process.ExitCode != 0)
                 {
                     var message = string.IsNullOrWhiteSpace(error) ? output : error;
                     throw new CommandException("Raw conversion failed for '" + outputPath + "': " + message.Trim());
                 }
+
+                return RawConversionTiming.ForProcess(total.Elapsed, start.Elapsed, input.Elapsed, wait.Elapsed, ReadConverterTiming(output));
             }
+        }
+
+        private static string ReadConverterTiming(string output)
+        {
+            if (string.IsNullOrWhiteSpace(output))
+            {
+                return null;
+            }
+
+            using (var reader = new StringReader(output))
+            {
+                string line;
+                while ((line = reader.ReadLine()) != null)
+                {
+                    const string prefix = "timing ";
+                    if (line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return line.Substring(prefix.Length);
+                    }
+                }
+            }
+
+            return null;
         }
 
         private static string BuildArguments(string outputPath, RawOutputFormat outputFormat, bool isBwImage, double gamma, float contrast, float saturation, int quality)
@@ -162,6 +201,46 @@ namespace ConsoleClient
             builder.Append('"');
             builder.Append(value.Replace("\"", "\\\""));
             builder.Append('"');
+        }
+    }
+
+    internal sealed class RawConversionTiming
+    {
+        private RawConversionTiming()
+        {
+        }
+
+        public TimeSpan TotalElapsed { get; private set; }
+
+        public TimeSpan? RawWriteElapsed { get; private set; }
+
+        public TimeSpan? ProcessStartElapsed { get; private set; }
+
+        public TimeSpan? InputWriteElapsed { get; private set; }
+
+        public TimeSpan? ProcessWaitElapsed { get; private set; }
+
+        public string ConverterTiming { get; private set; }
+
+        public static RawConversionTiming ForRawWrite(TimeSpan totalElapsed, TimeSpan rawWriteElapsed)
+        {
+            return new RawConversionTiming
+            {
+                TotalElapsed = totalElapsed,
+                RawWriteElapsed = rawWriteElapsed
+            };
+        }
+
+        public static RawConversionTiming ForProcess(TimeSpan totalElapsed, TimeSpan processStartElapsed, TimeSpan inputWriteElapsed, TimeSpan processWaitElapsed, string converterTiming)
+        {
+            return new RawConversionTiming
+            {
+                TotalElapsed = totalElapsed,
+                ProcessStartElapsed = processStartElapsed,
+                InputWriteElapsed = inputWriteElapsed,
+                ProcessWaitElapsed = processWaitElapsed,
+                ConverterTiming = converterTiming
+            };
         }
     }
 }

@@ -48,8 +48,12 @@ namespace ConsoleClient
                     PrintHelpBlock(
                         "init",
                         "Initializes TLX and keeps the scanner session open in interactive mode.",
-                        new[] { "init [--percent-progress]" },
-                        new[] { "--percent-progress  Requests percent-style initialization progress callbacks." },
+                        new[] { "init [--percent-progress] [--init-timeout-seconds 5]" },
+                        new[]
+                        {
+                            "--percent-progress       Requests percent-style initialization progress callbacks.",
+                            "--init-timeout-seconds  Seconds to wait for TLX initialization before failing. Default: 5."
+                        },
                         new[] { "init" });
                     return;
                 case "info":
@@ -106,7 +110,8 @@ namespace ConsoleClient
                             "--strip-mode         full-roll. Default: full-roll.",
                             "--scan-control       Comma-separated flags such as scratch,dx. Default: none.",
                             "--move-to-save-group Moves the newest scanned roll to the save group.",
-                            "--percent-progress   Requests percent-style initialization progress callbacks."
+                            "--percent-progress   Requests percent-style initialization progress callbacks.",
+                            "--init-timeout-seconds Seconds to wait for TLX initialization before failing. Default: 5."
                         },
                         new[]
                         {

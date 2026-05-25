@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Globalization;
 using System.IO;
+using PakonLib;
 using PakonLib.Enums;
 using PakonLib.Models;
 
@@ -13,7 +14,7 @@ namespace ConsoleClient
         private void Scan(OptionSet options)
         {
             EnsureScanner(options.GetBool("percent-progress"));
-            ResetProgress();
+            ResetProgress(WorkerThreadOperation.ScanError);
 
             var resolution = ParseResolution(options.Get("resolution", "base16"));
             var filmColor = ParseFilmColor(options.Get("film-color", "negative"));
@@ -43,7 +44,7 @@ namespace ConsoleClient
         private void FocusCorrection(OptionSet options)
         {
             EnsureScanner(false);
-            ResetProgress();
+            ResetProgress(WorkerThreadOperation.CorrectionsError);
             var resolution = ParseResolution(options.Get("resolution", "base16"));
             var filmColor = ParseFilmColor(options.Get("film-color", "negative"));
             var filmFormat = ParseFilmFormat(options.Get("film-format", "35mm"));
@@ -57,7 +58,7 @@ namespace ConsoleClient
         private void LightCorrection(OptionSet options)
         {
             EnsureScanner(false);
-            ResetProgress();
+            ResetProgress(WorkerThreadOperation.CorrectionsError);
             var resolution = ParseResolution(options.Get("resolution", "base16"));
             var filmColor = ParseFilmColor(options.Get("film-color", "negative"));
             var filmFormat = ParseFilmFormat(options.Get("film-format", "35mm"));
@@ -71,7 +72,7 @@ namespace ConsoleClient
         private void FilmTrackTest(OptionSet options)
         {
             EnsureScanner(false);
-            ResetProgress();
+            ResetProgress(WorkerThreadOperation.FilmTrackTestError);
             Console.WriteLine("Running film track test...");
             scanner.IScan.FilmTrackTest(options.GetBool("adjust-pots"));
             WaitForCompletion("film track test");
@@ -81,7 +82,7 @@ namespace ConsoleClient
         private void AdvanceFilm(OptionSet options)
         {
             EnsureScanner(false);
-            ResetProgress();
+            ResetProgress(WorkerThreadOperation.AdvanceFilmError);
             var milliseconds = options.GetInt("milliseconds", 500);
             var speed = options.GetInt("speed", 5);
             Console.WriteLine("Advancing film for {0} ms at speed {1}...", milliseconds, speed);
@@ -155,7 +156,7 @@ namespace ConsoleClient
         private void SaveToDisk(OptionSet options)
         {
             EnsureScanner(false);
-            ResetProgress();
+            ResetProgress(WorkerThreadOperation.SaveError);
 
             ApplyOutputDirectory(options);
 
@@ -299,7 +300,7 @@ namespace ConsoleClient
         private void SaveToClientMemory(OptionSet options)
         {
             EnsureScanner(false);
-            ResetProgress();
+            ResetProgress(WorkerThreadOperation.SaveError);
 
             var directory = ResolveUserPath(options.Get("directory", "."));
             Directory.CreateDirectory(directory);
@@ -331,13 +332,18 @@ namespace ConsoleClient
                 throw new CommandException("Raw conversion currently supports three-channel planar16 buffers. Remove --four-channel or use --format raw.");
             }
 
+            var bounds = ResolveClientMemorySaveBounds(index, saveControl, width, height, format, fourChannel);
+            width = bounds.Width;
+            height = bounds.Height;
+            bufferBytes = Math.Max(bufferBytes, bounds.BufferByteCount);
+
             scanner.Unsafe.MemoryFormat = format;
             scanner.Unsafe.ImageFromClientBufferReceived += delegate(byte[] data, uint bytesToCopy)
             {
                 chunk++;
                 var path = Path.Combine(directory, prefix + "-" + chunk.ToString("0000", CultureInfo.InvariantCulture) + RawConverterProcess.ExtensionFor(outputFormat));
-                rawConverter.Convert(data, path, outputFormat, isBwImage, gamma, contrast, saturation, quality);
-                Console.WriteLine("Wrote {0} ({1} bytes).", path, bytesToCopy);
+                var timing = rawConverter.Convert(data, path, outputFormat, isBwImage, gamma, contrast, saturation, quality);
+                Console.WriteLine("Wrote {0} ({1}) in {2}. {3}", path, FormatMegabytes(bytesToCopy), FormatDuration(timing.TotalElapsed), FormatRawConversionTiming(timing));
             };
 
             Console.WriteLine("Saving to client memory: {0}, {1}, {2}, {3} byte buffers", index, format, outputFormat, bufferBytes);
@@ -347,6 +353,81 @@ namespace ConsoleClient
             scanner.ISave.SaveToClientMemory(GetScannerInfo().ScannerType, index, saveControl, width, height, scaling, format, fourChannel);
             WaitForCompletion("memory save");
             Console.WriteLine("Memory save complete.");
+        }
+
+        private BoundingRectangleMetrics ResolveClientMemorySaveBounds(PictureIndex index, SaveControl saveControl, int width, int height, MemoryFileFormat format, bool fourChannel)
+        {
+            if (width > 0 && height > 0)
+            {
+                return new BoundingRectangleMetrics(width, height, Global.BufferSize(width, height, format, fourChannel));
+            }
+
+            var count = scanner.ISave.GetPictureCountSaveGroup();
+            var startIndex = 0;
+            var endIndex = count.PictureCount;
+
+            if (index == PictureIndex.Current || index == PictureIndex.First)
+            {
+                endIndex = Math.Min(1, count.PictureCount);
+            }
+            else if (index != PictureIndex.All && index != PictureIndex.AllSelected)
+            {
+                var rawIndex = (int)index.NativeValue;
+                if (rawIndex < 0 || rawIndex >= count.PictureCount)
+                {
+                    throw new CommandException("Picture index " + rawIndex + " is out of range.");
+                }
+
+                startIndex = rawIndex;
+                endIndex = rawIndex + 1;
+            }
+
+            var boundingWidth = 0;
+            var boundingHeight = 0;
+            var bufferByteCount = 0;
+
+            for (var currentIndex = startIndex; currentIndex < endIndex; currentIndex++)
+            {
+                if (index == PictureIndex.AllSelected)
+                {
+                    var info = scanner.ISave3.GetPictureInfo3(currentIndex);
+                    if (info.SelectedHidden != PictureSelection.Selected)
+                    {
+                        continue;
+                    }
+                }
+
+                var framing = saveControl.HasFlag(SaveControl.UseLoResBuffer)
+                    ? scanner.ISave.GetPictureFramingUserInfoLowRes(currentIndex)
+                    : scanner.ISave.GetPictureFramingUserInfo(currentIndex);
+                var frameWidth = framing.Right + 1 - framing.Left;
+                var frameHeight = framing.Bottom + 1 - framing.Top;
+                if (frameWidth <= 0 || frameHeight <= 0)
+                {
+                    throw new CommandException("Picture #" + currentIndex + " has invalid framing dimensions " + frameWidth + "x" + frameHeight + ".");
+                }
+
+                if (width > 0)
+                {
+                    frameWidth = width;
+                }
+
+                if (height > 0)
+                {
+                    frameHeight = height;
+                }
+
+                boundingWidth = Math.Max(boundingWidth, frameWidth);
+                boundingHeight = Math.Max(boundingHeight, frameHeight);
+                bufferByteCount = Math.Max(bufferByteCount, Global.BufferSize(frameWidth, frameHeight, format, fourChannel));
+            }
+
+            if (boundingWidth <= 0 || boundingHeight <= 0 || bufferByteCount <= 0)
+            {
+                throw new CommandException("No pictures to save.");
+            }
+
+            return new BoundingRectangleMetrics(boundingWidth, boundingHeight, bufferByteCount);
         }
 
         private void PrintPictureInfo(OptionSet options)
@@ -412,6 +493,38 @@ namespace ConsoleClient
                 framing.Right,
                 framing.Bottom);
         }
+
+        private static string FormatMegabytes(uint bytes)
+        {
+            return ((double)bytes / (1024 * 1024)).ToString("0.00", CultureInfo.InvariantCulture) + " MB";
+        }
+
+        private static string FormatDuration(TimeSpan elapsed)
+        {
+            return elapsed.TotalSeconds >= 1
+                ? elapsed.TotalSeconds.ToString("0.00", CultureInfo.InvariantCulture) + " s"
+                : elapsed.TotalMilliseconds.ToString("0", CultureInfo.InvariantCulture) + " ms";
+        }
+
+        private static string FormatRawConversionTiming(RawConversionTiming timing)
+        {
+            if (timing.RawWriteElapsed.HasValue)
+            {
+                return "Timing: file-write=" + FormatDuration(timing.RawWriteElapsed.Value) + ".";
+            }
+
+            var details = "Timing: process-start=" + FormatDuration(timing.ProcessStartElapsed.Value) +
+                          ", stdin=" + FormatDuration(timing.InputWriteElapsed.Value) +
+                          ", process-wait=" + FormatDuration(timing.ProcessWaitElapsed.Value);
+
+            if (!string.IsNullOrWhiteSpace(timing.ConverterTiming))
+            {
+                details += ", converter=[" + timing.ConverterTiming + "]";
+            }
+
+            return details + ".";
+        }
+
         private void PrintScannerInfo(ScannerInfo info)
         {
             Console.WriteLine("Scanner");

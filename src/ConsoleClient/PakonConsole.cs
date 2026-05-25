@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
+using System.Threading;
 using Microsoft.Win32;
 using PakonLib;
 using PakonLib.Enums;
@@ -17,13 +18,16 @@ namespace ConsoleClient
         private readonly string launchDirectory = Environment.CurrentDirectory;
         private Scanner scanner;
         private ScannerInfo scannerInfo;
+        private bool scannerInitialized;
         private WorkerThreadProgress lastProgress = WorkerThreadProgress.Initialize;
         private WorkerThreadOperation lastOperation = WorkerThreadOperation.TlxProgress;
+        private int lastStatus = WorkerThreadProgress.InitializeValue;
         private Exception callbackException;
         private bool verbose;
         private string comServerDirectory;
         private string scannerWorkingDirectory;
         private FilmColor? lastScanFilmColor;
+        private int initializeTimeoutSeconds = 5;
 
         public int Run(string[] args)
         {
@@ -113,6 +117,11 @@ namespace ConsoleClient
             var options = OptionSet.Parse(args.Skip(1));
             verbose = options.GetBool("verbose", "v");
             comServerDirectory = options.Get("com-server-dir", comServerDirectory);
+            initializeTimeoutSeconds = options.GetInt("init-timeout-seconds", initializeTimeoutSeconds);
+            if (initializeTimeoutSeconds <= 0)
+            {
+                throw new CommandException("Option --init-timeout-seconds expects a positive integer.");
+            }
 
             if (IsCommand(command, "commands"))
             {
@@ -154,7 +163,7 @@ namespace ConsoleClient
 
             if (IsCommand(command, "errors"))
             {
-                EnsureScanner(false);
+                EnsureScannerSession();
                 ClearErrors(ParseWorkerOperation(options.Get("operation", "tlx")));
                 return 0;
             }
@@ -288,6 +297,42 @@ namespace ConsoleClient
         {
             lock (scannerLock)
             {
+                if (scannerInitialized)
+                {
+                    return;
+                }
+            }
+
+            EnsureScannerSession();
+
+            ResetProgress(WorkerThreadOperation.InitializeError);
+
+            Console.WriteLine("Initializing TLX...");
+            try
+            {
+                using (StartInitializeWatchdog())
+                {
+                    ClearStartupErrors();
+                    scanner.InitializeTLX(percentProgress ? InitializationRequest.CSharpClientWithPercentProgress : InitializationRequest.CSharpClient);
+                    WaitForCompletion("initialize", TimeSpan.FromSeconds(initializeTimeoutSeconds));
+                    Console.WriteLine("Initialized.");
+                    lock (scannerLock)
+                    {
+                        scannerInitialized = true;
+                    }
+                }
+            }
+            catch
+            {
+                CloseScanner();
+                throw;
+            }
+        }
+
+        private void EnsureScannerSession()
+        {
+            lock (scannerLock)
+            {
                 if (scanner != null)
                 {
                     return;
@@ -299,19 +344,29 @@ namespace ConsoleClient
                 }
 
                 PrepareNativeRuntime();
-                ResetProgress();
+                ResetProgress(WorkerThreadOperation.TlxError);
                 scanner = new Scanner();
                 scanner.TlxScanProgress += OnScanProgress;
                 scanner.TlxSaveProgress += OnSaveProgress;
                 scanner.TlxHardware += OnHardwareProgress;
                 scanner.TlxError += OnTlxError;
             }
+        }
 
-            Console.WriteLine("Initializing TLX...");
-            ClearErrors(WorkerThreadOperation.TlxError, false);
-            scanner.InitializeTLX(percentProgress ? InitializationRequest.CSharpClientWithPercentProgress : InitializationRequest.CSharpClient);
-            WaitForCompletion("initialize");
-            Console.WriteLine("Initialized.");
+        private IDisposable StartInitializeWatchdog()
+        {
+            return new Timer(
+                _ =>
+                {
+                    Console.Error.WriteLine(
+                        "ERROR: Timed out waiting for TLX initialization after " +
+                        initializeTimeoutSeconds +
+                        " seconds. TLX did not return control to the client, so the process is exiting.");
+                    Environment.Exit(2);
+                },
+                null,
+                TimeSpan.FromSeconds(initializeTimeoutSeconds + 5),
+                Timeout.InfiniteTimeSpan);
         }
 
         private ScannerInfo GetScannerInfo()
@@ -355,6 +410,7 @@ namespace ConsoleClient
                 scannerToClose = scanner;
                 scanner = null;
                 scannerInfo = null;
+                scannerInitialized = false;
                 lastScanFilmColor = null;
             }
 

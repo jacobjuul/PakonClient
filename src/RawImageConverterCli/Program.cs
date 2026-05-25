@@ -4,21 +4,41 @@ using SixLabors.ImageSharp.Formats.Tiff;
 using SixLabors.ImageSharp.Formats.Bmp;
 using SixLabors.ImageSharp.PixelFormats;
 
-var options = CliOptions.Parse(args);
 var tempRawPath = Path.Combine(Path.GetTempPath(), "pakon-" + Guid.NewGuid().ToString("N") + ".raw");
+var totalStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
 try
 {
+    var options = CliOptions.Parse(args);
+    var readStopwatch = System.Diagnostics.Stopwatch.StartNew();
     await using (var temp = File.Create(tempRawPath))
     {
         await Console.OpenStandardInput().CopyToAsync(temp);
     }
+    readStopwatch.Stop();
 
+    var processStopwatch = System.Diagnostics.Stopwatch.StartNew();
     var processor = new PakonRawProcessor();
     using var image = processor.ProcessImage(tempRawPath, options.IsBwImage, NormalizeGamma(options.Gamma), options.Contrast, options.Saturation);
+    processStopwatch.Stop();
+
     Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(options.OutputPath))!);
+    var saveStopwatch = System.Diagnostics.Stopwatch.StartNew();
     SaveImage(image, options);
+    saveStopwatch.Stop();
+    totalStopwatch.Stop();
     Console.WriteLine(options.OutputPath);
+    Console.WriteLine(
+        "timing read-temp={0}, process={1}, save={2}, total={3}",
+        FormatDuration(readStopwatch.Elapsed),
+        FormatDuration(processStopwatch.Elapsed),
+        FormatDuration(saveStopwatch.Elapsed),
+        FormatDuration(totalStopwatch.Elapsed));
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine(ex.Message);
+    Environment.ExitCode = 1;
 }
 finally
 {
@@ -26,6 +46,13 @@ finally
     {
         File.Delete(tempRawPath);
     }
+}
+
+static string FormatDuration(TimeSpan elapsed)
+{
+    return elapsed.TotalSeconds >= 1
+        ? elapsed.TotalSeconds.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + " s"
+        : elapsed.TotalMilliseconds.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " ms";
 }
 
 static double NormalizeGamma(double value)
