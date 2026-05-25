@@ -95,7 +95,7 @@ namespace ConsoleClient
                 Console.WriteLine("Scan done");
 
                 //Console.WriteLine("Move roll to save group");
-                //scanner.ISave.MoveOldestRollToSaveGroup();
+                scanner.ISave.MoveOldestRollToSaveGroup();
 
                 Console.WriteLine("Saving to disk");
                 _wtProgress = WorkerThreadProgress.Initialize;

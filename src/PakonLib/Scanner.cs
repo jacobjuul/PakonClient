@@ -134,7 +134,7 @@ namespace PakonLib
                 case WorkerThreadOperation.SaveProgress:
                     switch (status)
                     {
-                        case 3000:
+                        case WorkerThreadProgress.ProgressCompleteValue:
                             ISave.ClientMemoryBufferDismissAll();
                             Unsafe.Deallocate();
                             break;
@@ -142,8 +142,8 @@ namespace PakonLib
                             Unsafe.ProcessBuffer(this);
                             Unsafe.NextBuffer(this);
                             break;
-                        case 0:
-                        case 1000:
+                        case WorkerThreadProgress.InitializeValue:
+                        case WorkerThreadProgress.ProgressStartValue:
                             break;
                     }
                     if (TlxSaveProgress != null)

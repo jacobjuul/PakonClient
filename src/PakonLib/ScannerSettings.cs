@@ -70,77 +70,90 @@ namespace PakonLib
             capabilities = new IntBits();
             if (Type == ScannerType.F235)
             {
-                capabilities[26] = true;
-                capabilities[27] = true;
-                capabilities[28] = true;
-                capabilities[22] = true;
-                capabilities[23] = true;
-                capabilities[24] = true;
-                capabilities[29] = true;
-                capabilities[30] = true;
-                capabilities[31] = true;
-                capabilities[0] = true;
-                capabilities[2] = true;
-                capabilities[4] = true;
-                capabilities[3] = true;
-                capabilities[7] = true;
+                SetCapabilities(
+                    ScannerCapabilities.Film24MM16Base,
+                    ScannerCapabilities.Film24MM8Base,
+                    ScannerCapabilities.Film24MM4Base,
+                    ScannerCapabilities.FilmC41,
+                    ScannerCapabilities.FilmPositive,
+                    ScannerCapabilities.Film24MM,
+                    ScannerCapabilities.Film35MM16Base,
+                    ScannerCapabilities.Film35MM8Base,
+                    ScannerCapabilities.Film35MM4Base,
+                    ScannerCapabilities.LampManualControl,
+                    ScannerCapabilities.FocusCorrection,
+                    ScannerCapabilities.PressureRollers,
+                    ScannerCapabilities.MultipleFilmTrack,
+                    ScannerCapabilities.FilterWheel);
             }
             else if (Type == ScannerType.F235C)
             {
-                capabilities[26] = true;
-                capabilities[27] = true;
-                capabilities[28] = true;
-                capabilities[22] = true;
-                capabilities[23] = true;
-                capabilities[24] = true;
-                capabilities[25] = true;
-                capabilities[29] = true;
-                capabilities[30] = true;
-                capabilities[31] = true;
-                capabilities[0] = true;
-                capabilities[2] = true;
-                capabilities[4] = true;
-                capabilities[3] = true;
-                capabilities[5] = true;
-                capabilities[7] = true;
+                SetCapabilities(
+                    ScannerCapabilities.Film24MM16Base,
+                    ScannerCapabilities.Film24MM8Base,
+                    ScannerCapabilities.Film24MM4Base,
+                    ScannerCapabilities.FilmC41,
+                    ScannerCapabilities.FilmPositive,
+                    ScannerCapabilities.Film24MM,
+                    ScannerCapabilities.Film24MMCartridge,
+                    ScannerCapabilities.Film35MM16Base,
+                    ScannerCapabilities.Film35MM8Base,
+                    ScannerCapabilities.Film35MM4Base,
+                    ScannerCapabilities.LampManualControl,
+                    ScannerCapabilities.FocusCorrection,
+                    ScannerCapabilities.PressureRollers,
+                    ScannerCapabilities.MultipleFilmTrack,
+                    ScannerCapabilities.AIDToolkit,
+                    ScannerCapabilities.FilterWheel);
             }
             else if (Type == ScannerType.F135 || Type == ScannerType.F135Plus)
             {
-                capabilities[29] = true;
-                capabilities[30] = true;
-                capabilities[31] = true;
-                capabilities[6] = true;
+                SetCapabilities(
+                    ScannerCapabilities.Film35MM16Base,
+                    ScannerCapabilities.Film35MM8Base,
+                    ScannerCapabilities.Film35MM4Base,
+                    ScannerCapabilities.FixedFocalLength);
             }
             else if (Type == ScannerType.F335)
             {
-                capabilities[26] = true;
-                capabilities[27] = true;
-                capabilities[28] = true;
-                capabilities[22] = true;
-                capabilities[23] = true;
-                capabilities[24] = true;
-                capabilities[29] = true;
-                capabilities[30] = true;
-                capabilities[31] = true;
-                capabilities[2] = true;
-                capabilities[4] = true;
-                capabilities[3] = true;
+                SetCapabilities(
+                    ScannerCapabilities.Film24MM16Base,
+                    ScannerCapabilities.Film24MM8Base,
+                    ScannerCapabilities.Film24MM4Base,
+                    ScannerCapabilities.FilmC41,
+                    ScannerCapabilities.FilmPositive,
+                    ScannerCapabilities.Film24MM,
+                    ScannerCapabilities.Film35MM16Base,
+                    ScannerCapabilities.Film35MM8Base,
+                    ScannerCapabilities.Film35MM4Base,
+                    ScannerCapabilities.FocusCorrection,
+                    ScannerCapabilities.PressureRollers,
+                    ScannerCapabilities.MultipleFilmTrack);
             }
             else if (Type == ScannerType.F335C)
             {
-                capabilities[26] = true;
-                capabilities[27] = true;
-                capabilities[28] = true;
-                capabilities[22] = true;
-                capabilities[23] = true;
-                capabilities[24] = true;
-                capabilities[25] = true;
-                capabilities[29] = true;
-                capabilities[30] = true;
-                capabilities[31] = true;
-                capabilities[2] = true;
-                capabilities[4] = true;
-                capabilities[3] = true;
+                SetCapabilities(
+                    ScannerCapabilities.Film24MM16Base,
+                    ScannerCapabilities.Film24MM8Base,
+                    ScannerCapabilities.Film24MM4Base,
+                    ScannerCapabilities.FilmC41,
+                    ScannerCapabilities.FilmPositive,
+                    ScannerCapabilities.Film24MM,
+                    ScannerCapabilities.Film24MMCartridge,
+                    ScannerCapabilities.Film35MM16Base,
+                    ScannerCapabilities.Film35MM8Base,
+                    ScannerCapabilities.Film35MM4Base,
+                    ScannerCapabilities.FocusCorrection,
+                    ScannerCapabilities.PressureRollers,
+                    ScannerCapabilities.MultipleFilmTrack);
+            }
+        }
+
+        private void SetCapabilities(params ScannerCapabilities[] scannerCapabilities)
+        {
+            foreach (ScannerCapabilities capability in scannerCapabilities)
+            {
+                capabilities[capability] = true;
             }
         }
 
@@ -185,8 +198,7 @@ namespace PakonLib
 
         public void OpenTLX(Scanner scanner)
         {
-            var request = InitializationRequest.FromRawValue(1073741825);
-            scanner.InitializeTLX(request);
+            scanner.InitializeTLX(InitializationRequest.CSharpClientWithPercentProgress);
         }
 
         public void CloseTLX(Scanner scanner)

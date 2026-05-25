@@ -7,6 +7,8 @@ namespace PakonLib
 {
     public class ScannerScan : PakonLib.Interfaces.IScanPictures
     {
+        private const string DefaultRollId = "1000";
+
         private TLXMainClass tlx = null;
 
         public ScannerScan(TLXMainClass tlxMain)
@@ -43,14 +45,13 @@ namespace PakonLib
 
         public void ScanPictures(Resolution resolution, FilmColor filmColor, FilmFormat filmFormat, StripMode stripMode, ScanControl scanControl)
         {
-            string rollId = "1000";
             tlx.ScanPictures(
                 (int)resolution.NativeValue,
                 (int)filmColor.NativeValue,
                 (int)filmFormat.NativeValue,
                 (int)stripMode.NativeValue,
                 (int)scanControl.NativeValue,
-                rollId);
+                DefaultRollId);
         }
 
         public void ScanCancel()

@@ -48,6 +48,12 @@ namespace PakonLib.Enums
 
         public static SaveControl UseColorKcdfs { get; } = FromName("SAV_UseColorKcdfs");
 
+        public static SaveControl DiskSaveDefaults { get; } = UseCurrentRotation | UseScratchRemovalIfAvailable;
+
+        public static SaveControl ClientMemorySaveDefaults { get; } = FileHeader | UseScratchRemovalIfAvailable | UseCurrentRotation;
+
+        public static SaveControl FourChannelClientMemorySaveDefaults { get; } = FileHeader | UseScratchRemovalIfAvailable;
+
         private static SaveControl FromName(string name) => new SaveControl((SAVE_CONTROL_000)Enum.Parse(typeof(SAVE_CONTROL_000), name));
 
         public static SaveControl FromNative(SAVE_CONTROL_000 value) => new SaveControl(value);

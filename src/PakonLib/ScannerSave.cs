@@ -44,7 +44,7 @@ public class ScannerSave : PakonLib.Interfaces.ISavePictures, PakonLib.Interface
 
     public void SaveToDisk(PictureIndex index, SaveControl saveControl, int boundingWidth, int boundingHeight, ScalingMethod scalingMethod, FileFormat fileFormat, int compression, int dpi, int colorBits)
     {
-        var control = saveControl | SaveControl.FromRawValue(132);
+        var control = saveControl | SaveControl.DiskSaveDefaults;
         tlx.SaveToDisk((int)index.NativeValue, null, (int)control.NativeValue, boundingWidth, boundingHeight, 0, (int)scalingMethod.NativeValue, (int)fileFormat.NativeValue, compression, dpi, colorBits);
     }
 
@@ -61,8 +61,8 @@ public class ScannerSave : PakonLib.Interfaces.ISavePictures, PakonLib.Interface
     public void SaveToClientMemory(ScannerType scannerType, PictureIndex index, SaveControl saveControl, int boundingWidth, int boundingHeight, ScalingMethod scalingMethod, MemoryFileFormat fileFormat, bool fourChannel)
     {
         var control = fourChannel
-            ? saveControl | SaveControl.FromRawValue(1152)
-            : saveControl | SaveControl.FromRawValue(1156);
+            ? saveControl | SaveControl.FourChannelClientMemorySaveDefaults
+            : saveControl | SaveControl.ClientMemorySaveDefaults;
         ROTATE_000 rotation = fourChannel
             ? ((scannerType == ScannerType.F135 || scannerType == ScannerType.F135Plus) ? ROTATE_000.ROTATE_90R : ROTATE_000.ROTATE_90L)
             : ROTATE_000.ROTATE_0;
@@ -120,5 +120,5 @@ public class ScannerSave : PakonLib.Interfaces.ISavePictures, PakonLib.Interface
         int bottom = 0;
         tlx.GetPictureFramingUserInfoLowRes(iIndex, ref left, ref top, ref right, ref bottom);
         return new PictureFramingInfo(left, top, right, bottom);
-}
+    }
 }

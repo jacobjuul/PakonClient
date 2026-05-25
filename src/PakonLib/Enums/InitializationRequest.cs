@@ -24,6 +24,9 @@ namespace PakonLib.Enums
         /// </summary>
         public static InitializationRequest CSharpClient { get; } = new InitializationRequest(INITIALIZE_CONTROL_000.INITIALIZE_CSharpClient);
 
+        public static InitializationRequest CSharpClientWithPercentProgress { get; } =
+            CSharpClient | new InitializationRequest(INITIALIZE_CONTROL_000.INITIALIZE_ProgressUpdatesAsPercent);
+
         /// <summary>
         /// Creates an <see cref="InitializationRequest"/> from a native TLX enumeration value.
         /// </summary>
@@ -49,5 +52,8 @@ namespace PakonLib.Enums
         public static bool operator ==(InitializationRequest left, InitializationRequest right) => left.Equals(right);
 
         public static bool operator !=(InitializationRequest left, InitializationRequest right) => !(left == right);
+
+        public static InitializationRequest operator |(InitializationRequest left, InitializationRequest right) =>
+            new InitializationRequest(left.NativeValue | right.NativeValue);
     }
 }

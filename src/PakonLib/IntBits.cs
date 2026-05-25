@@ -1,5 +1,6 @@
 ﻿// Pakon.IntBits
 using PakonLib;
+using PakonLib.Enums;
 
 public class IntBits
 {
@@ -29,6 +30,18 @@ public class IntBits
             {
                 bits &= ~(1 << nIndex);
             }
+        }
+    }
+
+    public bool this[ScannerCapabilities capability]
+    {
+        get
+        {
+            return this[(int)capability];
+        }
+        set
+        {
+            this[(int)capability] = value;
         }
     }
 

@@ -7,12 +7,24 @@ namespace PakonLib
     {
         private readonly WORKER_THREAD_PROGRESS_000 _value;
 
+        public const int InitializeValue = (int)WORKER_THREAD_PROGRESS_000.WTP_Initialize;
+
+        public const int ProgressStartValue = (int)WORKER_THREAD_PROGRESS_000.WTP_ProgressStart;
+
+        public const int ProgressEndValue = (int)WORKER_THREAD_PROGRESS_000.WTP_ProgressEnd;
+
+        public const int ProgressCompleteValue = (int)WORKER_THREAD_PROGRESS_000.WTP_ProgressComplete;
+
         private WorkerThreadProgress(WORKER_THREAD_PROGRESS_000 value)
         {
             _value = value;
         }
 
         public static WorkerThreadProgress Initialize => FromInterop(WORKER_THREAD_PROGRESS_000.WTP_Initialize);
+
+        public static WorkerThreadProgress ProgressStart => FromInterop(WORKER_THREAD_PROGRESS_000.WTP_ProgressStart);
+
+        public static WorkerThreadProgress ProgressEnd => FromInterop(WORKER_THREAD_PROGRESS_000.WTP_ProgressEnd);
 
         public static WorkerThreadProgress ProgressComplete => FromInterop(WORKER_THREAD_PROGRESS_000.WTP_ProgressComplete);
 

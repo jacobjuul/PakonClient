@@ -8,6 +8,8 @@ namespace PakonLib
 {
     public class ScannerUnsafe
     {
+        private const int TlxClientPointerBytes = 4;
+
         private MemoryFileFormat memoryFormat;
 
         private bool usingFirstBuffer = true;
@@ -42,14 +44,19 @@ namespace PakonLib
 
         public unsafe void Allocate(int bufferByteCount)
         {
+            if (IntPtr.Size != TlxClientPointerBytes)
+            {
+                throw new PlatformNotSupportedException("TLX client memory buffers use 32-bit pointer addresses. Run PakonClient as x86.");
+            }
+
             usingFirstBuffer = true;
             bufferSize = bufferByteCount;
             clientBufferPointer1 = Marshal.AllocHGlobal(bufferByteCount);
             clientBuffer1 = (byte*)(void*)clientBufferPointer1;
-            clientBufferAddress1 = clientBufferPointer1.ToInt32();
+            clientBufferAddress1 = checked(clientBufferPointer1.ToInt32());
             clientBufferPointer2 = Marshal.AllocHGlobal(bufferByteCount);
             clientBuffer2 = (byte*)(void*)clientBufferPointer2;
-            clientBufferAddress2 = clientBufferPointer2.ToInt32();
+            clientBufferAddress2 = checked(clientBufferPointer2.ToInt32());
         }
 
         public unsafe void Deallocate()
@@ -107,20 +114,22 @@ namespace PakonLib
             {
                 byte* buffer = (usingFirstBuffer ? clientBuffer2 : clientBuffer1);
                 uint bytesToCopy = 0u;
-            switch (memoryFormat.NativeValue)
-            {
-                case FILE_FORMAT_SAVE_TO_MEMORY_000.iFILE_FORMAT_SAVE_TO_MEMORY_PLANAR_16:
+
+                switch (memoryFormat.NativeValue)
+                {
+                    case FILE_FORMAT_SAVE_TO_MEMORY_000.iFILE_FORMAT_SAVE_TO_MEMORY_PLANAR_16:
                     {
                         SiPlanarFileHeader* header = (SiPlanarFileHeader*)buffer;
-                            bytesToCopy = header->Width * header->Height * (header->BitCount / 8u) + (uint)sizeof(SiPlanarFileHeader);
-                            break;
-                        }
+                        bytesToCopy = header->Width * header->Height * (header->BitCount / 8u) + (uint)sizeof(SiPlanarFileHeader);
+                        break;
+                    }
                     default:
                         throw new ArgumentException("Format not supported");
                     case FILE_FORMAT_SAVE_TO_MEMORY_000.iFILE_FORMAT_SAVE_TO_MEMORY_PLANAR_8:
                     case FILE_FORMAT_SAVE_TO_MEMORY_000.iFILE_FORMAT_SAVE_TO_MEMORY_DIB_8:
                         break;
                 }
+
                 if (bytesToCopy == 0)
                 {
                     throw new ArgumentException("Format not implemented");
