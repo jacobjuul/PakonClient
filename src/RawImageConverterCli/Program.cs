@@ -77,7 +77,7 @@ static void SaveImage(SixLabors.ImageSharp.Image<Rgb48> image, CliOptions option
     if (options.IsBwImage && options.Format == OutputFormat.Png)
     {
         using var output = File.Create(options.OutputPath);
-        image.Save(output, new PngEncoder { ColorType = PngColorType.Grayscale, BitDepth = PngBitDepth.Bit16 });
+        image.Save(output, new PngEncoder { ColorType = PngColorType.Grayscale, BitDepth = PngBitDepth.Bit16, CompressionLevel = PngCompressionLevel.BestSpeed });
         return;
     }
 
@@ -94,7 +94,7 @@ static void SaveImage(SixLabors.ImageSharp.Image<Rgb48> image, CliOptions option
             image.Save(stream, new BmpEncoder());
             break;
         default:
-            image.Save(stream, new PngEncoder { BitDepth = PngBitDepth.Bit16 });
+            image.Save(stream, new PngEncoder { BitDepth = PngBitDepth.Bit16, CompressionLevel = PngCompressionLevel.BestSpeed });
             break;
     }
 }

@@ -12,6 +12,7 @@ internal sealed class PakonRawProcessor
         var header = new byte[16];
         byte[] buffer;
         byte[] interleaved;
+        int pixelCount;
         int width;
         int height;
 
@@ -36,23 +37,26 @@ internal sealed class PakonRawProcessor
             interleaved = new byte[width * height * 6];
             fileStream.ReadExactly(buffer, 0, width * height * 6);
         }
+        pixelCount = width * height;
         readStopwatch.Stop();
 
-        var interleaveStopwatch = System.Diagnostics.Stopwatch.StartNew();
-        InterleaveBuffer(width, height, buffer, interleaved);
-        interleaveStopwatch.Stop();
+        var extremaStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var (darkest, brightest) = FindDarkestAndBrightestValues(buffer, pixelCount, isBwImage);
+        extremaStopwatch.Stop();
+
+        var mapStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var redMap = BuildLevelsGammaMap(brightest.R, darkest.R, gamma * 0.98);
+        var greenMap = BuildLevelsGammaMap(brightest.G, darkest.G, gamma * 1.02);
+        var blueMap = BuildLevelsGammaMap(brightest.B, darkest.B, gamma * 1.03);
+        mapStopwatch.Stop();
+
+        var transformStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        InterleaveAndTransformBuffer(pixelCount, buffer, interleaved, redMap, greenMap, blueMap);
+        transformStopwatch.Stop();
 
         var loadStopwatch = System.Diagnostics.Stopwatch.StartNew();
         var image = Image.LoadPixelData<Rgb48>(interleaved, width, height);
         loadStopwatch.Stop();
-
-        var levelsStopwatch = System.Diagnostics.Stopwatch.StartNew();
-        SetWhiteAndBlackpoint(image, isBwImage);
-        levelsStopwatch.Stop();
-
-        var gammaStopwatch = System.Diagnostics.Stopwatch.StartNew();
-        GammaCorrection(image, gamma);
-        gammaStopwatch.Stop();
 
         var adjustStopwatch = System.Diagnostics.Stopwatch.StartNew();
         if (isBwImage)
@@ -69,84 +73,51 @@ internal sealed class PakonRawProcessor
 
         LastTiming =
             "read-raw=" + FormatDuration(readStopwatch.Elapsed) +
-            ", interleave=" + FormatDuration(interleaveStopwatch.Elapsed) +
+            ", extrema=" + FormatDuration(extremaStopwatch.Elapsed) +
+            ", maps=" + FormatDuration(mapStopwatch.Elapsed) +
+            ", transform=" + FormatDuration(transformStopwatch.Elapsed) +
             ", load-pixels=" + FormatDuration(loadStopwatch.Elapsed) +
-            ", levels=" + FormatDuration(levelsStopwatch.Elapsed) +
-            ", gamma=" + FormatDuration(gammaStopwatch.Elapsed) +
             ", adjust=" + FormatDuration(adjustStopwatch.Elapsed);
 
         return image;
     }
 
-    private static void InterleaveBuffer(int width, int height, byte[] buffer, byte[] interleaved)
+    private static void InterleaveAndTransformBuffer(int pixelCount, byte[] buffer, byte[] interleaved, ushort[] redMap, ushort[] greenMap, ushort[] blueMap)
     {
         const int pixelSize = 6;
+        var greenOffset = pixelCount * 2;
+        var blueOffset = pixelCount * 4;
 
-        for (var i = 0; i != width * height * 2; i += 2)
+        for (var source = 0; source != pixelCount * 2; source += 2)
         {
-            interleaved[i / 2 * pixelSize + 0] = buffer[i];
-            interleaved[i / 2 * pixelSize + 1] = buffer[i + 1];
-            interleaved[i / 2 * pixelSize + 2] = buffer[(2 * width * height) + i];
-            interleaved[i / 2 * pixelSize + 3] = buffer[(2 * width * height) + i + 1];
-            interleaved[i / 2 * pixelSize + 4] = buffer[(2 * 2 * width * height) + i];
-            interleaved[i / 2 * pixelSize + 5] = buffer[(2 * 2 * width * height) + i + 1];
+            var target = source / 2 * pixelSize;
+            WriteUInt16(interleaved, target + 0, redMap[ReadUInt16(buffer, source)]);
+            WriteUInt16(interleaved, target + 2, greenMap[ReadUInt16(buffer, greenOffset + source)]);
+            WriteUInt16(interleaved, target + 4, blueMap[ReadUInt16(buffer, blueOffset + source)]);
         }
     }
 
-    private static void GammaCorrection(Image<Rgb48> image, double gamma)
+    private static ushort[] BuildLevelsGammaMap(ushort brightest, ushort darkest, double gamma)
     {
-        image.ProcessPixelRows(accessor =>
+        var map = new ushort[ushort.MaxValue + 1];
+        var range = darkest - brightest;
+        if (range == 0)
         {
-            for (var y = 0; y < accessor.Height; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                foreach (ref var pixel in row)
-                {
-                    var rangeR = (double)pixel.R / 65500;
-                    var correctionR = Math.Pow(rangeR, gamma * 0.98);
-                    pixel.R = (ushort)(correctionR * 65500);
+            return map;
+        }
 
-                    var rangeG = (double)pixel.G / 65500;
-                    var correctionG = Math.Pow(rangeG, gamma * 1.02);
-                    pixel.G = (ushort)(correctionG * 65500);
+        for (var value = 0; value < map.Length; value++)
+        {
+            var normalized = Math.Clamp((value - brightest) / (double)range, 0, 1);
+            var leveled = 65_534 * normalized;
+            var gammaInput = leveled / 65_500;
+            map[value] = (ushort)Math.Clamp(Math.Pow(gammaInput, gamma) * 65_500, 0, ushort.MaxValue);
+        }
 
-                    var rangeB = (double)pixel.B / 65500;
-                    var correctionB = Math.Pow(rangeB, gamma * 1.03);
-                    pixel.B = (ushort)(correctionB * 65500);
-                }
-            }
-        });
+        return map;
     }
 
-    private static void SetWhiteAndBlackpoint(Image<Rgb48> image, bool bwNegative)
-    {
-        var (darkest, brightest) = FindDarkestAndBrightestValues(image, bwNegative);
-
-        image.ProcessPixelRows(accessor =>
-        {
-            for (var y = 0; y < image.Height; y++)
-            {
-                var pixelRowSpan = accessor.GetRowSpan(y);
-                for (var x = 0; x < image.Width; x++)
-                {
-                    var pixel = pixelRowSpan[x];
-                    var r = (double)(pixel.R - brightest.R) / (darkest.R - brightest.R);
-                    var g = (double)(pixel.G - brightest.G) / (darkest.G - brightest.G);
-                    var b = (double)(pixel.B - brightest.B) / (darkest.B - brightest.B);
-                    r = Math.Clamp(r, 0, 1);
-                    g = Math.Clamp(g, 0, 1);
-                    b = Math.Clamp(b, 0, 1);
-
-                    pixelRowSpan[x] = new Rgb48(
-                        (ushort)(65_534 * r),
-                        (ushort)(65_534 * g),
-                        (ushort)(65_534 * b));
-                }
-            }
-        });
-    }
-
-    private static (Rgb48, Rgb48) FindDarkestAndBrightestValues(Image<Rgb48> image, bool bwNegative)
+    private static (Rgb48, Rgb48) FindDarkestAndBrightestValues(byte[] buffer, int pixelCount, bool bwNegative)
     {
         ushort darkestR = 0;
         ushort darkestG = 0;
@@ -154,31 +125,28 @@ internal sealed class PakonRawProcessor
         ushort smallestR = 65_534;
         ushort smallestG = 65_534;
         ushort smallestB = 65_534;
+        var greenOffset = pixelCount * 2;
+        var blueOffset = pixelCount * 4;
 
-        image.ProcessPixelRows(accessor =>
+        for (var source = 0; source != pixelCount * 2; source += 2)
         {
-            for (var y = 0; y < image.Height; y++)
-            {
-                var pixelRowSpan = accessor.GetRowSpan(y);
-                for (var x = 0; x < image.Width; x++)
-                {
-                    var pixel = pixelRowSpan[x];
-                    if (pixel.R > darkestR)
-                        darkestR = pixel.R;
-                    if (pixel.G > darkestG)
-                        darkestG = pixel.G;
-                    if (pixel.B > darkestB)
-                        darkestB = pixel.B;
+            var r = ReadUInt16(buffer, source);
+            var g = ReadUInt16(buffer, greenOffset + source);
+            var b = ReadUInt16(buffer, blueOffset + source);
+            if (r > darkestR)
+                darkestR = r;
+            if (g > darkestG)
+                darkestG = g;
+            if (b > darkestB)
+                darkestB = b;
 
-                    if (pixel.R < smallestR)
-                        smallestR = pixel.R;
-                    if (pixel.G < smallestG)
-                        smallestG = pixel.G;
-                    if (pixel.B < smallestB)
-                        smallestB = pixel.B;
-                }
-            }
-        });
+            if (r < smallestR)
+                smallestR = r;
+            if (g < smallestG)
+                smallestG = g;
+            if (b < smallestB)
+                smallestB = b;
+        }
 
         if (bwNegative)
         {
@@ -198,6 +166,17 @@ internal sealed class PakonRawProcessor
         return (
             new Rgb48(darkestR, darkestG, darkestB),
             new Rgb48(smallestR, smallestG, smallestB));
+    }
+
+    private static ushort ReadUInt16(byte[] buffer, int offset)
+    {
+        return (ushort)(buffer[offset] | (buffer[offset + 1] << 8));
+    }
+
+    private static void WriteUInt16(byte[] buffer, int offset, ushort value)
+    {
+        buffer[offset] = (byte)value;
+        buffer[offset + 1] = (byte)(value >> 8);
     }
 
     private static string FormatDuration(TimeSpan elapsed)
