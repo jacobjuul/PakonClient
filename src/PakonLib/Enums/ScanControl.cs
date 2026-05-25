@@ -18,33 +18,43 @@ namespace PakonLib.Enums
         /// </summary>
         public SCAN_CONTROL_000 NativeValue { get; }
 
-        public static ScanControl None { get; } = new ScanControl(SCAN_CONTROL_000.SCAN_None);
+        public static ScanControl None => new ScanControl(SCAN_CONTROL_000.SCAN_None);
 
-        public static ScanControl AggressiveFraming { get; } = FromName("SCAN_AggressiveFraming");
+        public static ScanControl AggressiveFraming => FromName("SCAN_AggressiveFraming");
 
-        public static ScanControl UseScratchRemoval { get; } = FromName("SCAN_UseScratchRemoval");
+        public static ScanControl UseScratchRemoval => FromName("SCAN_UseScratchRemoval");
 
-        public static ScanControl HasFilmDrag { get; } = FromName("SCAN_HasFilmDrag");
+        public static ScanControl HasFilmDrag => FromName("SCAN_HasFilmDrag");
 
-        public static ScanControl ReadDx { get; } = FromName("SCAN_Read_DX");
+        public static ScanControl ReadDx => FromName("SCAN_Read_DX");
 
-        public static ScanControl RftSenseSplice { get; } = FromName("SCAN_RFT_SenseSplice");
+        public static ScanControl RftSenseSplice => FromName("SCAN_RFT_SenseSplice");
 
-        public static ScanControl Use24mmExternalFileMof { get; } = FromName("SCAN_Use24mmExternalFileMOF");
+        public static ScanControl Use24mmExternalFileMof => FromName("SCAN_Use24mmExternalFileMOF");
 
-        public static ScanControl Use24mmAutoLoader { get; } = FromName("SCAN_Use24mmAutoLoader");
+        public static ScanControl Use24mmAutoLoader => FromName("SCAN_Use24mmAutoLoader");
 
-        public static ScanControl Use24mmAutoLoaderMof { get; } = FromName("SCAN_Use24mmAutoLoaderMOF");
+        public static ScanControl Use24mmAutoLoaderMof => FromName("SCAN_Use24mmAutoLoaderMOF");
 
-        public static ScanControl LampWarmUp { get; } = FromName("SCAN_LampWarmUp");
+        public static ScanControl LampWarmUp => FromName("SCAN_LampWarmUp");
 
-        public static ScanControl PreScan { get; } = FromName("SCAN_PreScan");
+        public static ScanControl PreScan => FromName("SCAN_PreScan");
 
-        private static ScanControl FromName(string name) => new ScanControl((SCAN_CONTROL_000)Enum.Parse(typeof(SCAN_CONTROL_000), name));
+        private static ScanControl FromName(string name)
+        {
+            if (Enum.IsDefined(typeof(SCAN_CONTROL_000), name))
+            {
+                return new ScanControl((SCAN_CONTROL_000)Enum.Parse(typeof(SCAN_CONTROL_000), name));
+            }
+
+            throw new NotSupportedException("Scan control '" + name + "' is not supported by this installed Pakon TLX interop. Run 'values' to see values supported by this client, or pass a raw TLX integer if your TLX version supports it.");
+        }
 
         public static ScanControl FromNative(SCAN_CONTROL_000 value) => new ScanControl(value);
 
         public static ScanControl FromRawValue(int value) => new ScanControl((SCAN_CONTROL_000)value);
+
+        public static bool IsNativeNameDefined(string name) => Enum.IsDefined(typeof(SCAN_CONTROL_000), name);
 
         public bool Equals(ScanControl other) => NativeValue.Equals(other.NativeValue);
 

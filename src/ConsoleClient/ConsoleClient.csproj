@@ -74,6 +74,7 @@
   <ItemGroup>
     <Reference Include="System" />
     <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
     <Reference Include="System.Xml.Linq" />
     <Reference Include="System.Data.DataSetExtensions" />
     <Reference Include="Microsoft.CSharp" />
@@ -81,7 +82,16 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="CommandException.cs" />
+    <Compile Include="OptionSet.cs" />
+    <Compile Include="PakonConsole.Commands.cs" />
+    <Compile Include="PakonConsole.Help.cs" />
+    <Compile Include="PakonConsole.Parsing.cs" />
+    <Compile Include="PakonConsole.Progress.cs" />
+    <Compile Include="PakonConsole.cs" />
     <Compile Include="Program.cs" />
+    <Compile Include="RawConverterProcess.cs" />
+    <Compile Include="RawOutputFormat.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>

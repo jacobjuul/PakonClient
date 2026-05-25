@@ -18,47 +18,57 @@ namespace PakonLib.Enums
         /// </summary>
         public SAVE_CONTROL_000 NativeValue { get; }
 
-        public static SaveControl None { get; } = new SaveControl(0);
+        public static SaveControl None => new SaveControl(0);
 
-        public static SaveControl SizeOriginal { get; } = new SaveControl(SAVE_CONTROL_000.SAV_SizeOriginal);
+        public static SaveControl SizeOriginal => new SaveControl(SAVE_CONTROL_000.SAV_SizeOriginal);
 
-        public static SaveControl SizeLimitForDisplay { get; } = FromName("SAV_SizeLimitForDisplay");
+        public static SaveControl SizeLimitForDisplay => FromName("SAV_SizeLimitForDisplay");
 
-        public static SaveControl SizeLimitForSave { get; } = FromName("SAV_SizeLimitForSave");
+        public static SaveControl SizeLimitForSave => FromName("SAV_SizeLimitForSave");
 
-        public static SaveControl UseCurrentRotation { get; } = FromName("SAV_UseCurrentRotation");
+        public static SaveControl UseCurrentRotation => FromName("SAV_UseCurrentRotation");
 
-        public static SaveControl UseLoResBuffer { get; } = new SaveControl(SAVE_CONTROL_000.SAV_UseLoResBuffer);
+        public static SaveControl UseLoResBuffer => new SaveControl(SAVE_CONTROL_000.SAV_UseLoResBuffer);
 
-        public static SaveControl UseScratchRemovalIfAvailable { get; } = FromName("SAV_UseScratchRemovalIfAvailable");
+        public static SaveControl UseScratchRemovalIfAvailable => FromName("SAV_UseScratchRemovalIfAvailable");
 
-        public static SaveControl UseColorCorrection { get; } = FromName("SAV_UseColorCorrection");
+        public static SaveControl UseColorCorrection => FromName("SAV_UseColorCorrection");
 
-        public static SaveControl UseColorSceneBalance { get; } = FromName("SAV_UseColorSceneBalance");
+        public static SaveControl UseColorSceneBalance => FromName("SAV_UseColorSceneBalance");
 
-        public static SaveControl UseColorAdjustments { get; } = FromName("SAV_UseColorAdjustments");
+        public static SaveControl UseColorAdjustments => FromName("SAV_UseColorAdjustments");
 
-        public static SaveControl FileHeader { get; } = FromName("SAV_FileHeader");
+        public static SaveControl FileHeader => FromName("SAV_FileHeader");
 
-        public static SaveControl FastUpdate8BitDib { get; } = FromName("SAV_FastUpdate8BitDib");
+        public static SaveControl FastUpdate8BitDib => FromName("SAV_FastUpdate8BitDib");
 
-        public static SaveControl TopDownDib { get; } = FromName("SAV_TopDownDib");
+        public static SaveControl TopDownDib => FromName("SAV_TopDownDib");
 
-        public static SaveControl DoNotScaleUp { get; } = FromName("SAV_DoNotScaleUp");
+        public static SaveControl DoNotScaleUp => FromName("SAV_DoNotScaleUp");
 
-        public static SaveControl UseColorKcdfs { get; } = FromName("SAV_UseColorKcdfs");
+        public static SaveControl UseColorKcdfs => FromName("SAV_UseColorKcdfs");
 
-        public static SaveControl DiskSaveDefaults { get; } = UseCurrentRotation | UseScratchRemovalIfAvailable;
+        public static SaveControl DiskSaveDefaults => UseCurrentRotation | UseScratchRemovalIfAvailable;
 
-        public static SaveControl ClientMemorySaveDefaults { get; } = FileHeader | UseScratchRemovalIfAvailable | UseCurrentRotation;
+        public static SaveControl ClientMemorySaveDefaults => FileHeader | UseScratchRemovalIfAvailable | UseCurrentRotation;
 
-        public static SaveControl FourChannelClientMemorySaveDefaults { get; } = FileHeader | UseScratchRemovalIfAvailable;
+        public static SaveControl FourChannelClientMemorySaveDefaults => FileHeader | UseScratchRemovalIfAvailable;
 
-        private static SaveControl FromName(string name) => new SaveControl((SAVE_CONTROL_000)Enum.Parse(typeof(SAVE_CONTROL_000), name));
+        private static SaveControl FromName(string name)
+        {
+            if (Enum.IsDefined(typeof(SAVE_CONTROL_000), name))
+            {
+                return new SaveControl((SAVE_CONTROL_000)Enum.Parse(typeof(SAVE_CONTROL_000), name));
+            }
+
+            throw new NotSupportedException("Save control '" + name + "' is not supported by this installed Pakon TLX interop. Run 'values' to see values supported by this client, or pass a raw TLX integer if your TLX version supports it.");
+        }
 
         public static SaveControl FromNative(SAVE_CONTROL_000 value) => new SaveControl(value);
 
         public static SaveControl FromRawValue(int value) => new SaveControl((SAVE_CONTROL_000)value);
+
+        public static bool IsNativeNameDefined(string name) => Enum.IsDefined(typeof(SAVE_CONTROL_000), name);
 
         public bool Equals(SaveControl other) => NativeValue.Equals(other.NativeValue);
 

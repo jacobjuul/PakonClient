@@ -166,6 +166,65 @@ namespace PakonLib
         {
         }
 
+        public void Shutdown()
+        {
+            try
+            {
+                if (scannerScan != null)
+                {
+                    scannerScan.ScanCancel();
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                if (scannerSave != null)
+                {
+                    scannerSave.SaveCancel();
+                    scannerSave.ClientMemoryBufferDismissAll();
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                CBUnadviseTLX();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                scannerUnsafe.Deallocate();
+            }
+            catch
+            {
+            }
+
+            if (tlx != null)
+            {
+                try
+                {
+                    Marshal.FinalReleaseComObject(tlx);
+                }
+                catch
+                {
+                }
+
+                tlx = null;
+            }
+
+            scannerScan = null;
+            scannerSave = null;
+            _callbackClient = null;
+        }
+
         public void InitializeTLX(InitializationRequest request)
         {
             int saveToMemoryTimeout = 200000;
@@ -221,8 +280,39 @@ namespace PakonLib
             }
             string errorMessage = string.Empty;
             string errorNumbers = string.Empty;
-            int returnValue = tlx.GetAndClearLastError((int)shortInterfaceId, ref errorMessage, ref errorNumbers);
+            int returnValue;
+            try
+            {
+                returnValue = tlx.GetAndClearLastError((int)shortInterfaceId, ref errorMessage, ref errorNumbers);
+            }
+            catch (COMException ex) when (TryGetKnownComError(ex, out ErrorCode errorCode))
+            {
+                returnValue = errorCode.RawValue;
+                errorMessage = GetComExceptionMessage(errorCode);
+                errorNumbers = ex.Message;
+            }
+
             return new ScannerErrorInfo(errorMessage, errorNumbers, returnValue);
+        }
+
+        private static bool TryGetKnownComError(COMException exception, out ErrorCode errorCode)
+        {
+            if (ErrorCode.TryFromValue(exception.ErrorCode, out errorCode))
+            {
+                return true;
+            }
+
+            return ErrorCode.TryParseComExceptionMessage(exception.Message, out errorCode);
+        }
+
+        private static string GetComExceptionMessage(ErrorCode errorCode)
+        {
+            if (errorCode.ToInterop() == ERROR_CODES_000.EC_ScannerNotInitialized)
+            {
+                return errorCode.DisplayName + ". TLX has not initialized the scanner. If the Pakon is powered off, the FX35 driver device is not present, so TLX cannot open the scanner.";
+            }
+
+            return errorCode.DisplayName + ".";
         }
 
         public ScannerInitializeWarnings GetInitializeWarnings()
@@ -238,7 +328,10 @@ namespace PakonLib
             {
                 tlx.CBUnadvise(tlxCookie);
                 tlxCookie = 0;
-                gch.Free();
+                if (gch.IsAllocated)
+                {
+                    gch.Free();
+                }
                 _callbackClient = null;
             }
         }

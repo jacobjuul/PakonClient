@@ -16,7 +16,7 @@ namespace PakonLib
 
         public string Name => _value.ToString();
 
-        public string DisplayName => FormatName(Name);
+        public string DisplayName => GetKnownDescription(RawValue) ?? FormatName(Name);
 
         public bool IsDefined => Enum.IsDefined(typeof(ERROR_CODES_000), _value);
 
@@ -71,6 +71,92 @@ namespace PakonLib
         public static bool operator ==(ErrorCode left, ErrorCode right) => left.Equals(right);
 
         public static bool operator !=(ErrorCode left, ErrorCode right) => !left.Equals(right);
+
+        public static bool TryParseComExceptionMessage(string message, out ErrorCode result)
+        {
+            result = default;
+            if (string.IsNullOrEmpty(message))
+            {
+                return false;
+            }
+
+            message = message.Trim().Trim('\'', '"');
+            if (!int.TryParse(message, out int value))
+            {
+                return false;
+            }
+
+            return TryFromValue(value, out result);
+        }
+
+        public static string GetKnownDescription(int value)
+        {
+            switch ((ERROR_CODES_000)value)
+            {
+                case ERROR_CODES_000.EC_InvalidPtrToClientCallback:
+                    return "Invalid Pointer To Client Callback";
+                case ERROR_CODES_000.EC_WorkerThreadExists:
+                    return "Worker Thread Already Exists";
+                case ERROR_CODES_000.EC_QueryInterface:
+                    return "QueryInterface for Client CallBack";
+                case ERROR_CODES_000.EC_CoMarshalInterThreadInterfaceInStream:
+                    return "CoMarshalInterThreadInterfaceInStream";
+                case ERROR_CODES_000.EC_UnableToCreateWorkerThread:
+                    return "Unable To Create Worker Thread";
+                case ERROR_CODES_000.EC_WorkerThreadCoInitialize:
+                    return "WorkerThreadCoInitialize";
+                case ERROR_CODES_000.EC_WorkerThreadCoGetInterfaceAndReleaseStream:
+                    return "Worker Thread CoGetInterfaceAndReleaseStream";
+                case ERROR_CODES_000.EC_WorkerThreadClientSignal:
+                    return "Worker Thread Client Signal";
+                case ERROR_CODES_000.EC_WorkerThreadStartTimeout:
+                    return "Worker Thread Start Timeout";
+                case ERROR_CODES_000.EC_ScannerNotInitialized:
+                    return "Scanner Not Initialized";
+                case ERROR_CODES_000.EC_NoPicturesOrStrips:
+                    return "No Pictures Or Strips";
+                case ERROR_CODES_000.EC_TooManyRolls:
+                    return "Too Many Rolls";
+                case ERROR_CODES_000.EC_InvalidIndex:
+                    return "Invalid Index";
+                case ERROR_CODES_000.EC_InvalidMemberVariable:
+                    return "Invalid Member Variable";
+                case ERROR_CODES_000.EC_InvalidParameter:
+                    return "Invalid Parameter";
+                case ERROR_CODES_000.EC_NoWorkerThreadForMultipleSaveToMemory:
+                    return "No Worker Thread For Multiple SaveToMemory";
+                case ERROR_CODES_000.EC_NoClientMemoryBuffer:
+                    return "No Client Memory Buffer";
+                case ERROR_CODES_000.EC_OneFileNameForMultipleSaves:
+                    return "One File Name For Multiple Saves";
+                case ERROR_CODES_000.EC_StartUpError:
+                    return "Start Up Error";
+                case ERROR_CODES_000.EC_CBAdviseAlreadyCalled:
+                    return "CBAdvise Already Called";
+                case ERROR_CODES_000.EC_CBAdviseNotCalled:
+                    return "CBAdvise Not Called";
+                case ERROR_CODES_000.EC_InitializeScannerAlreadyCalled:
+                    return "Initialize Scanner Already Called";
+                case ERROR_CODES_000.EC_AdjustMotorSpeedIsZero:
+                    return "Motor Adjust Speed is Zero";
+                case ERROR_CODES_000.EC_NotSupportedByHW:
+                    return "This function is not implemented in the hardware";
+                case ERROR_CODES_000.EC_PreviousError:
+                    return "Previous Error";
+                case ERROR_CODES_000.EC_CallEnableFullCalibration:
+                    return "Call Enable Full Calibration";
+                case ERROR_CODES_000.EC_FileNameListEmpty:
+                    return "File Name List Empty";
+                case ERROR_CODES_000.EC_LampError:
+                    return "Lamp Error";
+                case ERROR_CODES_000.EC_ChangingFrameNumberWithAps:
+                    return "Changing Frame Number With APS";
+                case ERROR_CODES_000.EC_NotAllowedWithAps:
+                    return "Not Allowed With APS";
+                default:
+                    return null;
+            }
+        }
 
         private static string FormatName(string name)
         {

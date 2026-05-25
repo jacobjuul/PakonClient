@@ -215,21 +215,9 @@ namespace PakonLib
         {
             FilmColor filmColor = FilmColor.Negative;
             FilmFormat filmFormat = FilmFormat.Format35mm;
-            Resolution resolution = Resolution.Base4;
+            Resolution resolution = Resolution.Base16;
             StripMode stripMode = StripMode.FullRoll;
             ScanControl scanControl = ScanControl.None;
-            if (Type == ScannerType.F135)
-            {
-                resolution = Resolution.Base4;
-            }
-            else if (Type == ScannerType.F235 || Type == ScannerType.F235C || Type == ScannerType.F135Plus)
-            {
-                resolution = Resolution.Base8;
-            }
-            else if (Type == ScannerType.F335 || Type == ScannerType.F335C)
-            {
-                resolution = Resolution.Base8;
-            }
 
             scanner.IScan.ScanPictures(resolution, filmColor, filmFormat, stripMode, scanControl);
         }
