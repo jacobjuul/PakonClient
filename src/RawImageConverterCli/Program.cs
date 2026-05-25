@@ -29,9 +29,10 @@ try
     totalStopwatch.Stop();
     Console.WriteLine(options.OutputPath);
     Console.WriteLine(
-        "timing read-temp={0}, process={1}, save={2}, total={3}",
+        "timing read-temp={0}, process={1}, process-detail=[{2}], save={3}, total={4}",
         FormatDuration(readStopwatch.Elapsed),
         FormatDuration(processStopwatch.Elapsed),
+        processor.LastTiming,
         FormatDuration(saveStopwatch.Elapsed),
         FormatDuration(totalStopwatch.Elapsed));
 }

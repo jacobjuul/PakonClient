@@ -69,6 +69,11 @@ namespace ConsoleClient
 
         public bool GetBool(params string[] keys)
         {
+            return GetBool(false, keys);
+        }
+
+        public bool GetBool(bool defaultValue, params string[] keys)
+        {
             foreach (var key in keys)
             {
                 string value;
@@ -94,7 +99,7 @@ namespace ConsoleClient
                 throw new CommandException("Option --" + key + " expects true or false.");
             }
 
-            return false;
+            return defaultValue;
         }
 
         public int GetInt(string key, int defaultValue)

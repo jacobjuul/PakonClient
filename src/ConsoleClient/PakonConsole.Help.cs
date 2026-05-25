@@ -26,7 +26,7 @@ namespace ConsoleClient
             Console.WriteLine("Typical scan and save workflow:");
             Console.WriteLine("  ConsoleClient.exe");
             Console.WriteLine("  pakon> init");
-            Console.WriteLine("  pakon> scan --scan-control scratch,dx --move-to-save-group");
+            Console.WriteLine("  pakon> scan --scan-control scratch,dx");
             Console.WriteLine("  pakon> save --directory C:\\Scans --prefix roll01 --format jpeg");
             Console.WriteLine("  pakon> quit");
             Console.WriteLine();
@@ -100,7 +100,7 @@ namespace ConsoleClient
                 case "scan":
                     PrintHelpBlock(
                         "scan",
-                        "Scans a roll into the TLX scan group. Use --move-to-save-group before save, or use scan-save to do both steps from program startup.",
+                        "Scans a roll and moves it to the TLX save group by default. Use scan-save to scan and save files from program startup.",
                         new[] { "scan [options]" },
                         new[]
                         {
@@ -109,14 +109,15 @@ namespace ConsoleClient
                             "--film-format        35mm or another value from 'values'. Default: 35mm.",
                             "--strip-mode         full-roll. Default: full-roll.",
                             "--scan-control       Comma-separated flags such as scratch,dx. Default: none.",
-                            "--move-to-save-group Moves the newest scanned roll to the save group.",
+                            "--move-to-save-group Moves the newest scanned roll to the save group. Default: true.",
                             "--percent-progress   Requests percent-style initialization progress callbacks.",
                             "--init-timeout-seconds Seconds to wait for TLX initialization before failing. Default: 5."
                         },
                         new[]
                         {
-                            "scan --scan-control scratch,dx --move-to-save-group",
-                            "scan --resolution base16 --film-color positive --move-to-save-group"
+                            "scan --scan-control scratch,dx",
+                            "scan --resolution base16 --film-color positive",
+                            "scan --move-to-save-group false"
                         });
                     return;
                 case "scansave":
@@ -257,6 +258,7 @@ namespace ConsoleClient
                             "--contrast       Raw conversion contrast multiplier for colour output. Default: 1.08.",
                             "--saturation     Raw conversion saturation multiplier for colour output. Default: 1.08.",
                             "--raw-converter  Path to RawImageConverterCli.exe. Defaults to beside ConsoleClient.exe.",
+                            "--conversion-workers  Parallel raw conversion process count. Default: 2 for converted output, 1 for raw.",
                             "--four-channel   Requests four-channel memory output.",
                             "--buffer-mb      Client buffer size in MB. Default: 64."
                         },

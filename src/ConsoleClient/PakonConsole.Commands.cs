@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Globalization;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using PakonLib;
 using PakonLib.Enums;
 using PakonLib.Models;
@@ -28,7 +31,7 @@ namespace ConsoleClient
             WaitForCompletion("scan");
             Console.WriteLine("Scan complete.");
 
-            if (options.GetBool("move-to-save-group", "move"))
+            if (options.GetBool(true, "move-to-save-group", "move"))
             {
                 scanner.ISave.MoveOldestRollToSaveGroup();
                 Console.WriteLine("Moved oldest roll to save group.");
@@ -320,6 +323,16 @@ namespace ConsoleClient
             var quality = options.GetInt("quality", 90);
             var isBwImage = ShouldInvertSavedImages(options);
             var rawConverter = new RawConverterProcess(RawConverterProcess.ResolvePath(options.Get("raw-converter", null), launchDirectory));
+            var conversionWorkers = options.GetInt("conversion-workers", outputFormat == RawOutputFormat.Raw ? 1 : Math.Min(2, Environment.ProcessorCount));
+            if (conversionWorkers < 1)
+            {
+                throw new CommandException("Option --conversion-workers must be at least 1.");
+            }
+
+            var conversionSlots = new SemaphoreSlim(conversionWorkers, conversionWorkers);
+            var conversionTasks = new List<Task>();
+            var conversionTasksLock = new object();
+            var consoleLock = new object();
             var chunk = 0;
 
             if (outputFormat != RawOutputFormat.Raw && format != MemoryFileFormat.Planar16)
@@ -340,19 +353,72 @@ namespace ConsoleClient
             scanner.Unsafe.MemoryFormat = format;
             scanner.Unsafe.ImageFromClientBufferReceived += delegate(byte[] data, uint bytesToCopy)
             {
-                chunk++;
-                var path = Path.Combine(directory, prefix + "-" + chunk.ToString("0000", CultureInfo.InvariantCulture) + RawConverterProcess.ExtensionFor(outputFormat));
-                var timing = rawConverter.Convert(data, path, outputFormat, isBwImage, gamma, contrast, saturation, quality);
-                Console.WriteLine("Wrote {0} ({1}) in {2}. {3}", path, FormatMegabytes(bytesToCopy), FormatDuration(timing.TotalElapsed), FormatRawConversionTiming(timing));
+                var currentChunk = Interlocked.Increment(ref chunk);
+                var path = Path.Combine(directory, prefix + "-" + currentChunk.ToString("0000", CultureInfo.InvariantCulture) + RawConverterProcess.ExtensionFor(outputFormat));
+                conversionSlots.Wait();
+                var task = Task.Factory.StartNew(
+                    delegate
+                    {
+                        try
+                        {
+                            var timing = rawConverter.Convert(data, path, outputFormat, isBwImage, gamma, contrast, saturation, quality);
+                            lock (consoleLock)
+                            {
+                                Console.WriteLine("Wrote {0} ({1}) in {2}. {3}", path, FormatMegabytes(bytesToCopy), FormatDuration(timing.TotalElapsed), FormatRawConversionTiming(timing));
+                            }
+                        }
+                        finally
+                        {
+                            conversionSlots.Release();
+                        }
+                    },
+                    CancellationToken.None,
+                    TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default);
+
+                lock (conversionTasksLock)
+                {
+                    conversionTasks.Add(task);
+                }
             };
 
-            Console.WriteLine("Saving to client memory: {0}, {1}, {2}, {3} byte buffers", index, format, outputFormat, bufferBytes);
+            Console.WriteLine("Saving to client memory: {0}, {1}, {2}, {3} byte buffers, {4} conversion worker(s)", index, format, outputFormat, bufferBytes, conversionWorkers);
             scanner.Unsafe.Allocate(bufferBytes);
             scanner.Unsafe.NextBuffer(scanner);
             scanner.Unsafe.NextBuffer(scanner);
             scanner.ISave.SaveToClientMemory(GetScannerInfo().ScannerType, index, saveControl, width, height, scaling, format, fourChannel);
             WaitForCompletion("memory save");
+            WaitForRawConversions(conversionTasks, conversionTasksLock);
             Console.WriteLine("Memory save complete.");
+        }
+
+        private static void WaitForRawConversions(List<Task> conversionTasks, object conversionTasksLock)
+        {
+            Task[] tasks;
+            lock (conversionTasksLock)
+            {
+                tasks = conversionTasks.ToArray();
+            }
+
+            try
+            {
+                Task.WaitAll(tasks);
+            }
+            catch (AggregateException ex)
+            {
+                throw new CommandException("Raw conversion failed: " + FlattenExceptionMessages(ex));
+            }
+        }
+
+        private static string FlattenExceptionMessages(AggregateException exception)
+        {
+            var messages = new List<string>();
+            foreach (var inner in exception.Flatten().InnerExceptions)
+            {
+                messages.Add(inner.Message);
+            }
+
+            return string.Join("; ", messages.ToArray());
         }
 
         private BoundingRectangleMetrics ResolveClientMemorySaveBounds(PictureIndex index, SaveControl saveControl, int width, int height, MemoryFileFormat format, bool fourChannel)

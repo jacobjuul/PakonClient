@@ -112,7 +112,7 @@ namespace PakonLib
         {
             if (clientBuffer1 != null)
             {
-                byte* buffer = (usingFirstBuffer ? clientBuffer2 : clientBuffer1);
+                byte* buffer = usingFirstBuffer ? clientBuffer1 : clientBuffer2;
                 uint bytesToCopy = 0u;
 
                 switch (memoryFormat.NativeValue)
@@ -120,7 +120,18 @@ namespace PakonLib
                     case FILE_FORMAT_SAVE_TO_MEMORY_000.iFILE_FORMAT_SAVE_TO_MEMORY_PLANAR_16:
                     {
                         SiPlanarFileHeader* header = (SiPlanarFileHeader*)buffer;
-                        bytesToCopy = header->Width * header->Height * (header->BitCount / 8u) + (uint)sizeof(SiPlanarFileHeader);
+                        if (header->Size < sizeof(SiPlanarFileHeader) || header->Width == 0 || header->Height == 0 || header->BitCount == 0)
+                        {
+                            throw new InvalidOperationException("Invalid planar raw header: size=" + header->Size + ", width=" + header->Width + ", height=" + header->Height + ", bitCount=" + header->BitCount + ".");
+                        }
+
+                        var expectedByteCount = (ulong)header->Width * header->Height * (header->BitCount / 8u) + (uint)sizeof(SiPlanarFileHeader);
+                        if (expectedByteCount > (ulong)bufferSize)
+                        {
+                            throw new InvalidOperationException("Planar raw header reports " + expectedByteCount + " bytes, exceeding the " + bufferSize + " byte client buffer.");
+                        }
+
+                        bytesToCopy = (uint)expectedByteCount;
                         break;
                     }
                     default:

@@ -1,12 +1,14 @@
-using System.Collections.Concurrent;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 
 internal sealed class PakonRawProcessor
 {
+    public string LastTiming { get; private set; } = "";
+
     public Image<Rgb48> ProcessImage(string filename, bool isBwImage, double gamma, float contrast, float saturation)
     {
+        var readStopwatch = System.Diagnostics.Stopwatch.StartNew();
         var header = new byte[16];
         byte[] buffer;
         byte[] interleaved;
@@ -34,12 +36,25 @@ internal sealed class PakonRawProcessor
             interleaved = new byte[width * height * 6];
             fileStream.ReadExactly(buffer, 0, width * height * 6);
         }
+        readStopwatch.Stop();
 
+        var interleaveStopwatch = System.Diagnostics.Stopwatch.StartNew();
         InterleaveBuffer(width, height, buffer, interleaved);
-        var image = Image.LoadPixelData<Rgb48>(interleaved, width, height);
-        SetWhiteAndBlackpoint(image, isBwImage);
-        GammaCorrection(image, gamma);
+        interleaveStopwatch.Stop();
 
+        var loadStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var image = Image.LoadPixelData<Rgb48>(interleaved, width, height);
+        loadStopwatch.Stop();
+
+        var levelsStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        SetWhiteAndBlackpoint(image, isBwImage);
+        levelsStopwatch.Stop();
+
+        var gammaStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        GammaCorrection(image, gamma);
+        gammaStopwatch.Stop();
+
+        var adjustStopwatch = System.Diagnostics.Stopwatch.StartNew();
         if (isBwImage)
         {
             image.Mutate(x => x.Invert());
@@ -50,6 +65,15 @@ internal sealed class PakonRawProcessor
             image.Mutate(x => x.Contrast(contrast));
             image.Mutate(x => x.Saturate(saturation));
         }
+        adjustStopwatch.Stop();
+
+        LastTiming =
+            "read-raw=" + FormatDuration(readStopwatch.Elapsed) +
+            ", interleave=" + FormatDuration(interleaveStopwatch.Elapsed) +
+            ", load-pixels=" + FormatDuration(loadStopwatch.Elapsed) +
+            ", levels=" + FormatDuration(levelsStopwatch.Elapsed) +
+            ", gamma=" + FormatDuration(gammaStopwatch.Elapsed) +
+            ", adjust=" + FormatDuration(adjustStopwatch.Elapsed);
 
         return image;
     }
@@ -124,15 +148,12 @@ internal sealed class PakonRawProcessor
 
     private static (Rgb48, Rgb48) FindDarkestAndBrightestValues(Image<Rgb48> image, bool bwNegative)
     {
-        var darkestValues = new ConcurrentDictionary<string, ushort>();
-        darkestValues.TryAdd("R", 0);
-        darkestValues.TryAdd("G", 0);
-        darkestValues.TryAdd("B", 0);
-
-        var smallestValues = new ConcurrentDictionary<string, ushort>();
-        smallestValues.TryAdd("R", 65_534);
-        smallestValues.TryAdd("G", 65_534);
-        smallestValues.TryAdd("B", 65_534);
+        ushort darkestR = 0;
+        ushort darkestG = 0;
+        ushort darkestB = 0;
+        ushort smallestR = 65_534;
+        ushort smallestG = 65_534;
+        ushort smallestB = 65_534;
 
         image.ProcessPixelRows(accessor =>
         {
@@ -141,40 +162,48 @@ internal sealed class PakonRawProcessor
                 var pixelRowSpan = accessor.GetRowSpan(y);
                 for (var x = 0; x < image.Width; x++)
                 {
-                    if (pixelRowSpan[x].R > darkestValues["R"])
-                        darkestValues.TryUpdate("R", pixelRowSpan[x].R, darkestValues["R"]);
-                    if (pixelRowSpan[x].G > darkestValues["G"])
-                        darkestValues.TryUpdate("G", pixelRowSpan[x].G, darkestValues["G"]);
-                    if (pixelRowSpan[x].B > darkestValues["B"])
-                        darkestValues.TryUpdate("B", pixelRowSpan[x].B, darkestValues["B"]);
+                    var pixel = pixelRowSpan[x];
+                    if (pixel.R > darkestR)
+                        darkestR = pixel.R;
+                    if (pixel.G > darkestG)
+                        darkestG = pixel.G;
+                    if (pixel.B > darkestB)
+                        darkestB = pixel.B;
 
-                    if (pixelRowSpan[x].R < smallestValues["R"])
-                        smallestValues.TryUpdate("R", pixelRowSpan[x].R, smallestValues["R"]);
-                    if (pixelRowSpan[x].G < smallestValues["G"])
-                        smallestValues.TryUpdate("G", pixelRowSpan[x].G, smallestValues["G"]);
-                    if (pixelRowSpan[x].B < smallestValues["B"])
-                        smallestValues.TryUpdate("B", pixelRowSpan[x].B, smallestValues["B"]);
+                    if (pixel.R < smallestR)
+                        smallestR = pixel.R;
+                    if (pixel.G < smallestG)
+                        smallestG = pixel.G;
+                    if (pixel.B < smallestB)
+                        smallestB = pixel.B;
                 }
             }
         });
 
         if (bwNegative)
         {
-            darkestValues["R"] -= darkestValues["R"] > 99 ? (ushort)100 : darkestValues["R"];
-            darkestValues["G"] -= darkestValues["G"] > 99 ? (ushort)100 : darkestValues["G"];
-            darkestValues["B"] -= darkestValues["B"] > 99 ? (ushort)100 : darkestValues["B"];
+            darkestR -= darkestR > 99 ? (ushort)100 : darkestR;
+            darkestG -= darkestG > 99 ? (ushort)100 : darkestG;
+            darkestB -= darkestB > 99 ? (ushort)100 : darkestB;
 
-            smallestValues["R"] = Math.Clamp(smallestValues["R"], (ushort)0, (ushort)65_454);
-            smallestValues["G"] = Math.Clamp(smallestValues["G"], (ushort)0, (ushort)65_454);
-            smallestValues["B"] = Math.Clamp(smallestValues["B"], (ushort)0, (ushort)65_454);
+            smallestR = Math.Clamp(smallestR, (ushort)0, (ushort)65_454);
+            smallestG = Math.Clamp(smallestG, (ushort)0, (ushort)65_454);
+            smallestB = Math.Clamp(smallestB, (ushort)0, (ushort)65_454);
 
-            smallestValues["R"] += 80;
-            smallestValues["G"] += 80;
-            smallestValues["B"] += 80;
+            smallestR += 80;
+            smallestG += 80;
+            smallestB += 80;
         }
 
         return (
-            new Rgb48(darkestValues["R"], darkestValues["G"], darkestValues["B"]),
-            new Rgb48(smallestValues["R"], smallestValues["G"], smallestValues["B"]));
+            new Rgb48(darkestR, darkestG, darkestB),
+            new Rgb48(smallestR, smallestG, smallestB));
+    }
+
+    private static string FormatDuration(TimeSpan elapsed)
+    {
+        return elapsed.TotalSeconds >= 1
+            ? elapsed.TotalSeconds.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + " s"
+            : elapsed.TotalMilliseconds.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " ms";
     }
 }
