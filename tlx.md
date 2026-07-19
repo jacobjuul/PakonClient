@@ -817,6 +817,85 @@ scanner-start control sequence that chooses the ring dimensions and data
 format.  Those parameters and packets remain to be mapped; no active scan
 implementation has been added.
 
+### Scan control loop versus pixel path (additional static trace)
+
+The TLA object created after PFS setup (`FUN_10032440`, approximately
+`0x1465c` bytes) is a long-lived scan state container.  Starting it creates a
+manual-reset event specifically named `m_DriverOverlappedReadFile.hEvent`,
+then allocates a separate `0x1e8`-byte control coordinator.  The coordinator
+starts a dedicated polling thread and creates two further events labelled
+`m_DriverOverlappedPPB.hEvent` and `m_hDriverEventPollPPB`.
+
+That polling thread is **not the pixel decoder**.  It waits on the driver
+event, queries a four-entry interrupt/status sequence, reports changes to the
+outer scan state, and writes small scanner command packets when a state change
+requires it.  The command helper accepts status selectors `0xf4` and `0xfe`;
+the state helper in turn emits `0x98`-family commands.  This is a scanner
+control/firmware-status loop, distinct from the overlapped bulk-read/PFS data
+path.
+
+During the same startup sequence TLA dynamically loads `PakonImau.dll`,
+constructs its image-processing host, invokes a configuration entry with the
+configured colour/profile paths, sends a scanner command in the `0xf6/0x80`
+family using a resulting 16-bit value, and only then publishes the initial
+scanner state.  This reinforces the ordering: native colour resources and
+scanner firmware setup are initialized before scan acquisition, but the
+thread above does not itself transform PFS data to pixels.
+
+The currently recovered PFS helper (`FUN_100061a0`) merely validates that the
+PFS object has an active backing allocation and returns its current handle.
+It is not a PFS read/decompression routine.  Therefore the outstanding
+decoder trace should follow the completed-buffer processing calls, rather
+than the PPB event-poll functions or this PFS allocation helper.
+
+### PFS is a bounded striped file store, not an image codec
+
+The PFS read and write primitives are now identified:
+
+| Native routine | Confirmed behavior |
+| --- | --- |
+| `FUN_10006320` | Validates a selected stripe/file and block-aligned request, waits for the PFS file-access lock, then uses `WriteFile`.  The caller breaks writes into chunks no larger than `0x100000` (1 MiB). |
+| `FUN_100065e0` | Computes the selected stripe offset, seeks with `SetFilePointerEx`, and reads the requested span in chunks no larger than `0x100000` via `ReadFile`. |
+| `FUN_10007010` | Allocates one contiguous client buffer, reads a requested PFS byte span into it, then returns pointers to the data and the trailing portion. |
+| `FUN_10037140` | The `EventScanWriteToDisk` worker consumes completed driver-ring regions and persists them through a `CiBufferHiRes` object into PFS. |
+
+There is no compression, pixel conversion, or colour operation in these
+routines.  PFS is a bounded, block-aligned, striped temporary byte store over
+the preallocated `PFSnn.bin` files.  It protects concurrent file access with
+events/critical sections and validates range/stripe completion, but otherwise
+preserves the bytes supplied by the scan writer.  This is useful for a future
+replacement: a modern implementation can initially retain the same raw byte
+stream in a simple append-only capture file, without reimplementing PFS's
+partition management.
+
+The next decoder target is now narrower: the consumers of the `CiBufferHiRes`
+read buffer after scan completion, not PFS itself.  Those consumers must
+interpret the preserved scanner strip bytes and produce framed pixel planes.
+
+### Overlapped acquisition lifecycle
+
+`FUN_1002fca0` ties the driver ring and PFS writer together.  It resets two
+events, starts a scan-packet worker and the `EventScanWriteToDisk` worker,
+then issues one overlapped `ReadFile` against the FX35 driver with the ring
+data region and a dedicated `m_DriverOverlappedReadFile.hEvent` event.  A
+successful asynchronous start must return `ERROR_IO_PENDING`; a synchronous
+completion is deliberately treated as an error by this legacy code.
+
+The scan-packet worker consumes `EventScanPacketReady`; the disk worker
+consumes `EventScanWriteToDisk`.  At completion, TLA cancels the outstanding
+driver I/O, waits for both workers, then sends a final scanner state command.
+The disk worker explicitly reports `ProcessedRingTailOverflow` if its
+processed position falls behind the driver ring, so the ring is a producer /
+consumer queue with back-pressure rather than a one-shot buffer.
+
+This gives a practical initial contract for a direct managed acquisition
+experiment: allocate the existing ring layout, begin a single overlapped read,
+advance the driver and processed tails without allowing either to overrun the
+other, persist each completed region verbatim, and only then stop/cancel the
+read.  The exact interpretation of a completed region is still unresolved;
+the packet-worker entry is an analysis gap in the current Ghidra function map
+and needs to be rediscovered from its call target or by a safe runtime trace.
+
 ### Direct-driver smoke test
 
 The current machine successfully opened `\\.\PAKON135` and called
@@ -827,32 +906,185 @@ That result confirms the device path and IOCTL access; it should not yet be
 treated as authoritative driver-version metadata because the installed driver
 behavior differs from the current source's documented six-byte response.
 
-## Incremental replacement strategy
+### Managed transport probe
 
-1. **Direct transport probe.** Add a small managed `PakonDriverTransport`
-   abstraction that opens the correct driver device and exposes only a safe
-   metadata probe at first.  Keep `SendAndReceive` internal until packet
-   semantics are known.
-2. **Trace a harmless query.** Reverse `GetScannerInfo000` through `tlx.dll`
-   and its delegated component(s), capture the packet, and replay it via the
-   managed transport.  Compare all decoded values with TLX.
-3. **Map scan setup.** Trace `ScanPictures`, including each scan-control bit.
-   Establish the callback/state sequence and all packets.
-4. **Acquire raw scan data.** Implement the packet/data-stream state machine
-   and preserve raw data before attempting image processing.
-5. **Recreate output processing.** Implement framing, color, scratch removal,
-   and saving incrementally, using TLX output as a behavioral oracle.
-6. **Remove dependencies deliberately.** Do not remove the COM server from a
-   test environment until every required operation is covered by regression
-   traces and real-film tests.
+`src\PakonTransportProbe` is a small .NET Framework 4.8 x86 console project
+that establishes the first two replacement seams without invoking `tlx.dll`:
+
+1. It opens a selected driver endpoint and sends only
+   `IOCTL_EZUSB_GET_DRIVER_VERSION` (`0x222074`), logging the exact empty
+   request and returned bytes. It never invokes the packet IOCTL (`0x222090`),
+   scan initialization, scanner firmware commands, movement, lamps,
+   calibration, or EEPROM operations.
+2. It directly instantiates the registered FX35 backend CLSID
+   `{6449DE65-60A9-4A45-A3A1-337F5E6B41E0}` (`TLC.TLAMain.1`) and immediately
+   releases it. No TLX/TLC interface is queried and `InitializeScanner` is not
+   called. This proves that C# can bypass `tlx.dll` while still retaining TLC
+   as the backend.
+
+Example invocations:
+
+```powershell
+PakonTransportProbe.exe --device \\.\PakonX35 --log C:\Temp\pakon-transport.log
+PakonTransportProbe.exe --device \\.\Pakon135
+```
+
+On the current machine, the default `\\.\PakonX35` open correctly reported
+`ERROR_FILE_NOT_FOUND`, while direct TLC COM activation succeeded. Re-running
+with the installed `\\.\Pakon135` endpoint successfully opened the driver,
+sent `0x222074`, and logged a successful zero-byte reply; TLC activation also
+succeeded. The zero-byte response matches the previously observed installed
+driver behaviour and is recorded verbatim rather than decoded as a version.
+
+## Target architecture and migration plan
+
+The target is a clear, x64 **.NET 10** application. Its normal scan path must
+not require a registered COM server, `Interop.TLXLib.dll`, `tlx.dll`, or the
+old TLX public naming. It will use names that describe observable behaviour
+(for example `ApplyRollSceneBalance`, `CaptureRawScanStream`, and
+`WriteRenderedImage`) rather than preserving ambiguous legacy method names.
+
+During the first migration stage we will deliberately retain the legacy native
+image-processing algorithms where they provide value—especially the installed
+PakonImau/Ansel implementation—but call them through an explicitly documented
+managed/native boundary. The old DLLs are an implementation dependency during
+that stage, **not** the application's public API or architecture. TLC/TLX may
+run beside the new code as a regression oracle, but must not be required for a
+new scan.
+
+```text
+Target first production path
+.NET 10 app -> managed driver transport -> Pakon driver -> scanner
+            -> documented native image bridge -> PakonImau / Ansel
+
+Temporary validation path only
+.NET 10 test harness -> legacy TLX/TLC COM -> same scanner and algorithms
+```
+
+This separates two goals that should not be conflated: remove the COM/runtime
+requirement first, then replace each native algorithm only after it has a
+measurable compatible managed implementation.
+
+1. **Remove the public COM dependency.** Build a .NET 10 transport layer that
+   discovers/opens the installed driver endpoint, sends only recovered packet
+   types, handles the bulk read/ring lifecycle, and exposes well-named managed
+   scanner state. The existing x86 probe proves direct driver access; the
+   .NET 10 implementation will be x64 and will not use TLX COM client-memory
+   pointers.
+2. **Recover and isolate the native image boundary.** Reproduce the TLC-owned
+   PakonImau host setup, contexts, buffer adapters, and Ansel roll lifecycle
+   sufficiently to use the installed PakonImau/Ansel algorithms without
+   constructing a TLX/TLC COM object. This is a research milestone, not yet a
+   justified implementation: the exact native contexts and ownership rules
+   remain incomplete.
+3. **Give every setting a managed meaning.** For each legacy flag, document
+   its stage, prerequisite, hardware effect versus host-side effect, and
+   observable output change. The new API will expose an explicit option only
+   when that meaning is known; unknown values remain internal/raw diagnostics,
+   not misleading public booleans.
+4. **Replace acquisition and framing in house.** Capture the raw stream with
+   the managed transport, define the raw-buffer and frame boundaries, and use
+   TLX output only as a regression reference. Replace PFS with straightforward
+   managed capture/storage rather than emulating its striped temporary files.
+5. **Replace rendering incrementally.** Implement negative correction, LUT
+   selection, scene balance, adjustments, scratch removal, and output encoding
+   as separately testable .NET components. Keep a calibrated intermediate at
+   each stage so that differences against the legacy pipeline are explainable.
+6. **Retire each legacy dependency deliberately.** PakonImau/Ansel is the
+   final major image-processing dependency to replace, after its inputs,
+   outputs, metadata decisions, and roll-level behaviour have regression
+   coverage. Only then can the Kodak/Pakon COM server and processing DLLs be
+   absent from a production installation.
+
+The next immediate research target is still a harmless scanner status query:
+trace it through TLC, replay it with the managed transport, and give it a
+clear managed name. That expands direct-driver capability without guessing at
+scan, movement, lamp, calibration, or EEPROM packets.
+
+## Colour pipeline and the Pakon look
+
+The distinctive Pakon result is a **pipeline**, rather than one secret LUT.
+The recovered native code supports this implementation model for a C-41 scan:
+
+`scanner samples -> negative correction -> scene/roll balance -> optional creative adjustments -> output transform/encoding`
+
+1. **Negative correction** uses a prepared native lookup-table context plus a
+   matrix-derived context.  The installed client negative assets include a
+   16,384-entry tone curve and a 3x4 RGB affine matrix, but TLA preprocesses
+   those assets into native contexts before calling PakonImau.  The text LUT is
+   therefore an input calibration asset, not a complete replacement transform.
+2. **Scene balance** is the PakonImau subsystem called **Ansel**.  It carries
+   state across a roll: each scene contributes its film-base/D-min measurement
+   and, when available, film product and generation codes.  Ansel analyzes the
+   assembled roll and applies a selected scene transform to planar pixels.
+   This is why `UseColorSceneBalance` is meaningful only after colour
+   correction and why enabling it can make frames on the same roll look more
+   consistent than independently corrected frames.
+3. **Adjustments** happen afterward.  PakonImau's post-correction operation
+   can use adjustment LUTs, contrast, sharpening, saturation or monochrome
+   effect profiles, and an ICC-related final stage.  These are separate from
+   film inversion and roll balance.
+
+In colour-science terms, the first stage compensates for the orange mask,
+film-base density, scanner response, and film-specific dye behaviour; the
+second estimates a pleasing neutral/tonal reference using information from the
+roll; the final stage applies rendering choices.  The warm, contrasty,
+consistent “Pakon look” comes from the interaction of all three.  It should
+not be described as a universal “premium LUT.”
+
+The current evidence does **not** identify the exact mathematical form or
+coefficients of Ansel's roll analysis.  A future replacement should initially
+make this stage explicit and optional: preserve a calibrated negative-corrected
+intermediate, implement a transparent per-frame balance first, then add
+roll-level statistics and compare them against TLX output on controlled rolls.
+The full low-level contract is maintained in `tlx-lowlevel.md`.
+
+### Runtime Ansel diagnostic: six-frame colour-negative example
+
+`docs\ansel-diag-example.txt` is an actual diagnostic from a six-frame C-41
+scan with the `CN-Enhanced` path. It turns the previously inferred pipeline
+into an observable contract:
+
+- Each scene is reduced to a `250 x 375`, three-band, 12-bit,
+  band-interleaved `StandardAnalysisImage` for analysis. The final scan image
+  is not used directly at this stage.
+- The frames all reported the same scanner D-min: `354, 829, 1047`, no film
+  ISO (`0`), and the negative source/metric enum (`1` / `1`). Thus this
+  particular strip had no usable product/generation/DX choice at the Ansel
+  level.
+- Every frame selected the generic default film LUT
+  `filmLut-scanner-prod-gen-default-default-default.lut`, the FUGC LUT
+  `NoShift_fugc-generic0225.lut`, and the `CN-Enhanced` 4,096-entry contrast
+  recipe with contrast `2.25`. It therefore demonstrates that the prominent
+  per-frame differences below occur even when the film LUT and contrast class
+  stay constant.
+- Ansel produced different RGB scene-balance shifts for the six scenes:
+  `596/210/-52`, `514/128/-136`, `372/-8/-275`, `426/63/-193`,
+  `491/88/-169`, and `332/-30/-244`. Its derived balanced D-min values also
+  vary by scene (for example `872/960/917` for the first scene and
+  `595/709/712` for the sixth). This is direct evidence that scene balance is
+  adaptive image analysis rather than a fixed film transform.
+- The active capabilities were `afterSCPLutSba`, `contrast`, `dei`, `falloff`,
+  `filmLut`, `flesh`, `fugc`, `noiseTable`, `nra`, `sba`, and `scpLut`. The
+  diagnostic records a five-value scene `classification`, a 17-node DEI
+  decision tree result, flesh-protection shifts, noise/falloff settings, and
+  the chosen LUT/configuration keys.
+
+For a compatible implementation, this gives a sensible staged target: first
+replicate the analysis proxy image and record D-min, scene statistics and RGB
+balance shifts; next reproduce the default LUT/contrast choice; only then
+attempt the proprietary classification, flesh, and decision-tree behaviour.
 
 ## Native-analysis tooling
 
-Ghidra 12.1.2 is now available and has been used for the current `tlx.dll`
-analysis.  It can decompile the 32-bit native DLLs, follow imports/exports and
-COM vtables, label functions, and preserve an analysis project.  The next
-static-analysis step is importing `TLA.dll`, `TLB.dll`, and `TLC.dll` into the
-same project after resolving the CLSID/IID hand-off described above.
+Ghidra 12.1.2 has been used for the current `tlx.dll`, `TLA.dll`, `TLB.dll`,
+and `TLC.dll` analysis. It can decompile the 32-bit native DLLs, follow
+imports/exports and COM vtables, label functions, and preserve an analysis
+project. The important CLSID hand-off is now resolved: `tlx.dll` is the public
+facade and selects `TLC.dll` for `\\.\PakonX35` (FX35), while it selects
+`TLB.dll` for `\\.\Pakon135` (F135). Therefore TLC is the primary static
+analysis target for this scanner. The low-level module map and recovered
+addresses are maintained in `tlx-lowlevel.md`.
 
 Useful companion tools are a debugger with process/module support (x64dbg is
 adequate even for this 32-bit target) and a way to log `DeviceIoControl` calls.
@@ -862,7 +1094,8 @@ film, change lamp state, calibrate, write EEPROM, or reset the factory state.
 
 ## Open questions
 
-- Which responsibilities belong to TLA, TLB, and TLC respectively?
+- What are the exact code and configuration differences between the otherwise
+  closely related TLA, TLB, and TLC backends?
 - What is the complete packet structure and response/state model?
 - How does TLX start and consume bulk scan-data transfers?
 - Which exact `Config\ColorCorrection` assets are selected for each negative

@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PakonLib", "PakonLib\PakonL
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RawImageConverterCli", "RawImageConverterCli\RawImageConverterCli.csproj", "{D7EE4745-EDAD-480F-8528-2BA839A376E3}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PakonTransportProbe", "PakonTransportProbe\PakonTransportProbe.csproj", "{A79A6B2E-2E38-4E92-925A-398D57128552}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -53,6 +55,16 @@ Global
 		{D7EE4745-EDAD-480F-8528-2BA839A376E3}.Release|Mixed Platforms.Build.0 = Release|Any CPU
 		{D7EE4745-EDAD-480F-8528-2BA839A376E3}.Release|x86.ActiveCfg = Release|Any CPU
 		{D7EE4745-EDAD-480F-8528-2BA839A376E3}.Release|x86.Build.0 = Release|Any CPU
+		{A79A6B2E-2E38-4E92-925A-398D57128552}.Debug|Any CPU.ActiveCfg = Debug|x86
+		{A79A6B2E-2E38-4E92-925A-398D57128552}.Debug|Mixed Platforms.ActiveCfg = Debug|x86
+		{A79A6B2E-2E38-4E92-925A-398D57128552}.Debug|Mixed Platforms.Build.0 = Debug|x86
+		{A79A6B2E-2E38-4E92-925A-398D57128552}.Debug|x86.ActiveCfg = Debug|x86
+		{A79A6B2E-2E38-4E92-925A-398D57128552}.Debug|x86.Build.0 = Debug|x86
+		{A79A6B2E-2E38-4E92-925A-398D57128552}.Release|Any CPU.ActiveCfg = Release|x86
+		{A79A6B2E-2E38-4E92-925A-398D57128552}.Release|Mixed Platforms.ActiveCfg = Release|x86
+		{A79A6B2E-2E38-4E92-925A-398D57128552}.Release|Mixed Platforms.Build.0 = Release|x86
+		{A79A6B2E-2E38-4E92-925A-398D57128552}.Release|x86.ActiveCfg = Release|x86
+		{A79A6B2E-2E38-4E92-925A-398D57128552}.Release|x86.Build.0 = Release|x86
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
