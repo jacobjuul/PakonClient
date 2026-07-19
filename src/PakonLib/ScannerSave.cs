@@ -5,7 +5,7 @@ using PakonLib.Models;
 using PakonLib;
 using PakonLib.Enums;
 
-public class ScannerSave : PakonLib.Interfaces.ISavePictures, PakonLib.Interfaces.ISavePictures3
+public class ScannerSave : PakonLib.Interfaces.IImageRenderer, PakonLib.Interfaces.ISavePictures3
 {
     private TLXMainClass tlx = null;
 
@@ -42,23 +42,23 @@ public class ScannerSave : PakonLib.Interfaces.ISavePictures, PakonLib.Interface
         return new PictureCountSaveGroupResult(rollCount, stripCount, pictureCount, pictureSelectedCount, pictureHiddenCount);
     }
 
-    public void SaveToDisk(PictureIndex index, SaveControl saveControl, int boundingWidth, int boundingHeight, ScalingMethod scalingMethod, FileFormat fileFormat, int compression, int dpi, int colorBits)
+    public void RenderToFile(PictureIndex index, SaveControl saveControl, int boundingWidth, int boundingHeight, ScalingMethod scalingMethod, FileFormat fileFormat, int compression, int dpi, int colorBits)
     {
         var control = saveControl | SaveControl.DiskSaveDefaults;
         tlx.SaveToDisk((int)index.NativeValue, null, (int)control.NativeValue, boundingWidth, boundingHeight, 0, (int)scalingMethod.NativeValue, (int)fileFormat.NativeValue, compression, dpi, colorBits);
     }
 
-    public void ClientMemoryBufferAdd(int iByteStartPointer, int iByteCount)
+    public void RegisterRenderBuffer(int iByteStartPointer, int iByteCount)
     {
         tlx.ClientMemoryBufferAdd(iByteStartPointer, iByteCount);
     }
 
-    public void ClientMemoryBufferDismissAll()
+    public void ClearRenderBuffers()
     {
         tlx.ClientMemoryBufferDismissAll();
     }
 
-    public void SaveToClientMemory(ScannerType scannerType, PictureIndex index, SaveControl saveControl, int boundingWidth, int boundingHeight, ScalingMethod scalingMethod, MemoryFileFormat fileFormat, bool fourChannel)
+    public void RenderToBuffer(ScannerType scannerType, PictureIndex index, SaveControl saveControl, int boundingWidth, int boundingHeight, ScalingMethod scalingMethod, MemoryFileFormat fileFormat, bool fourChannel)
     {
         var control = fourChannel
             ? saveControl | SaveControl.FourChannelClientMemorySaveDefaults
@@ -69,7 +69,7 @@ public class ScannerSave : PakonLib.Interfaces.ISavePictures, PakonLib.Interface
         tlx.SaveToClientMemory((int)index.NativeValue, (int)control.NativeValue, boundingWidth, boundingHeight, (int)rotation, (int)scalingMethod.NativeValue, (int)fileFormat.NativeValue, 1);
     }
 
-    public void SaveCancel()
+    public void CancelRender()
     {
         tlx.SaveCancel();
     }

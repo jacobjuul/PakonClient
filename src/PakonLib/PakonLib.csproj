@@ -65,10 +65,11 @@
     <Compile Include="Global.cs" />
     <Compile Include="Delegates\ImageFromClientBuffer.cs" />
     <Compile Include="IntBits.cs" />
-    <Compile Include="Interfaces\ISavePictures.cs" />
+    <Compile Include="Interfaces\IImageRenderer.cs" />
     <Compile Include="Interfaces\ISavePictures3.cs" />
     <Compile Include="Interfaces\IScanPictures.cs" />
     <Compile Include="Models\BoundingRectangleMetrics.cs" />
+    <Compile Include="Models\ColorNegativeAssets.cs" />
     <Compile Include="Models\PictureCountSaveGroupResult.cs" />
     <Compile Include="Models\PictureCountScanGroupResult.cs" />
     <Compile Include="Models\PictureFramingInfo.cs" />

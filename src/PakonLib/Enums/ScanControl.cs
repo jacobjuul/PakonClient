@@ -20,25 +20,69 @@ namespace PakonLib.Enums
 
         public static ScanControl None => new ScanControl(SCAN_CONTROL_000.SCAN_None);
 
+        /// <summary>
+        /// Skips image-content frame detection and immediately places frames at the expected spacing.
+        /// Use when normal framing cannot reliably find picture boundaries.
+        /// </summary>
         public static ScanControl AggressiveFraming => FromName("SCAN_AggressiveFraming");
 
+        /// <summary>
+        /// Requests the TLA scratch-removal processing path. Availability and the resulting correction
+        /// still depend on the native scan configuration.
+        /// </summary>
         public static ScanControl UseScratchRemoval => FromName("SCAN_UseScratchRemoval");
 
+        /// <summary>
+        /// Declares film drag to the native scan state. The 24 mm auto-loader path also forces this state.
+        /// </summary>
         public static ScanControl HasFilmDrag => FromName("SCAN_HasFilmDrag");
 
+        /// <summary>
+        /// Requests DX-code reading. This name is not present in the installed TLX 1.1 type library,
+        /// so accessing it throws unless another TLX version supplies the value.
+        /// </summary>
         public static ScanControl ReadDx => FromName("SCAN_Read_DX");
 
+        /// <summary>
+        /// Requests splice sensing during native scan setup.
+        /// </summary>
         public static ScanControl RftSenseSplice => FromName("SCAN_RFT_SenseSplice");
 
+        /// <summary>
+        /// Requests a 24 mm external-file MOF mode. This name is not present in the installed TLX 1.1
+        /// type library, so its native behavior is not yet established here.
+        /// </summary>
         public static ScanControl Use24mmExternalFileMof => FromName("SCAN_Use24mmExternalFileMOF");
 
+        /// <summary>
+        /// Enables the 24 mm auto-loader transport path; TLA also enables film-drag handling for it.
+        /// </summary>
         public static ScanControl Use24mmAutoLoader => FromName("SCAN_Use24mmAutoLoader");
 
+        /// <summary>
+        /// Requests a 24 mm auto-loader MOF mode. This name is not present in the installed TLX 1.1
+        /// type library, so its native behavior is not yet established here.
+        /// </summary>
         public static ScanControl Use24mmAutoLoaderMof => FromName("SCAN_Use24mmAutoLoaderMOF");
 
+        /// <summary>
+        /// Requests native lamp warm-up mode. This name is not present in the installed TLX 1.1 type
+        /// library, so its native behavior is not yet established here.
+        /// </summary>
         public static ScanControl LampWarmUp => FromName("SCAN_LampWarmUp");
 
+        /// <summary>
+        /// Selects TLA's pre-scan flow, which takes a distinct setup/early-return path rather than a
+        /// normal scan flow. The user-visible result still needs a controlled hardware test.
+        /// </summary>
         public static ScanControl PreScan => FromName("SCAN_PreScan");
+
+        /// <summary>
+        /// Requests TLX's premium color-negative mode. This is host-side PakonImau processing,
+        /// not an FX35 driver command; the exact recipe selected by this installed TLX build is
+        /// still being traced.
+        /// </summary>
+        public static ScanControl UsePremiumColorPath => FromName("SCAN_UsePremiumColorPath");
 
         private static ScanControl FromName(string name)
         {

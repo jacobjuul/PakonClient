@@ -42,14 +42,14 @@ namespace PakonLib
 
         public void MoveRollToSaveGroup(Scanner scanner)
         {
-            PictureCountSaveGroupResult saveGroupCounts = scanner.ISave.GetPictureCountSaveGroup();
+            PictureCountSaveGroupResult saveGroupCounts = scanner.Images.GetPictureCountSaveGroup();
             if (saveGroupCounts.PictureCount > 0)
             {
-                scanner.ISave.PutPictureSelection(PictureIndex.All, PictureSelection.None, true);
+                scanner.Images.PutPictureSelection(PictureIndex.All, PictureSelection.None, true);
             }
 
-            PictureCountScanGroupResult scanGroupCounts = scanner.ISave.GetPictureCountScanGroup(0);
-            scanner.ISave.MoveOldestRollToSaveGroup();
+            PictureCountScanGroupResult scanGroupCounts = scanner.Images.GetPictureCountScanGroup(0);
+            scanner.Images.MoveOldestRollToSaveGroup();
             for (int i = saveGroupCounts.PictureCount; i < saveGroupCounts.PictureCount + scanGroupCounts.PictureCount; i++)
             {
                 PictureAddedToSaveGroup?.Invoke(i);
@@ -58,7 +58,7 @@ namespace PakonLib
 
         public void SetPictureInfo(Scanner scanner, int indexValue, int newFrameNumber, string newFileName, string newDirectory, int newRotation, PictureSelection newSelectedHidden, IntBits info)
         {
-            PictureInfo pictureInfo = scanner.ISave3.GetPictureInfo3(indexValue);
+            PictureInfo pictureInfo = scanner.ImageMetadata.GetPictureInfo3(indexValue);
             int frameNumber = pictureInfo.FrameNumber;
             string fileName = pictureInfo.FileName;
             string directory = pictureInfo.Directory;
@@ -84,12 +84,12 @@ namespace PakonLib
             {
                 selectedHidden = newSelectedHidden;
             }
-            scanner.ISave.PutPictureInfo(indexValue, frameNumber, fileName, directory, rotation, selectedHidden);
+            scanner.Images.PutPictureInfo(indexValue, frameNumber, fileName, directory, rotation, selectedHidden);
         }
 
         private BoundingRectangleMetrics FindBoundingRectangle(Scanner scanner, bool fourChannel)
         {
-            PictureCountSaveGroupResult saveGroupCounts = scanner.ISave.GetPictureCountSaveGroup();
+            PictureCountSaveGroupResult saveGroupCounts = scanner.Images.GetPictureCountSaveGroup();
             int pictureCount = saveGroupCounts.PictureCount;
             int startIndex;
             int endIndex;
@@ -128,7 +128,7 @@ namespace PakonLib
                 bool include = true;
                 if (Index == PictureIndex.AllSelected)
                 {
-                    PakonLib.Interfaces.ISavePictures3 saveInterface = scanner.ISave3;
+                    PakonLib.Interfaces.ISavePictures3 saveInterface = scanner.ImageMetadata;
                     PictureInfo pictureInfo = saveInterface.GetPictureInfo3(currentIndex);
                     include = pictureInfo.SelectedHidden == PictureSelection.Selected;
                 }
@@ -136,8 +136,8 @@ namespace PakonLib
                 if (include)
                 {
                     PictureFramingInfo framingInfo = saveControl.HasFlag(SaveControl.UseLoResBuffer)
-                        ? scanner.ISave.GetPictureFramingUserInfoLowRes(currentIndex)
-                        : scanner.ISave.GetPictureFramingUserInfo(currentIndex);
+                        ? scanner.Images.GetPictureFramingUserInfoLowRes(currentIndex)
+                        : scanner.Images.GetPictureFramingUserInfo(currentIndex);
                     int width = framingInfo.Right + 1 - framingInfo.Left;
                     int height = framingInfo.Bottom + 1 - framingInfo.Top;
                     int bufferSize = Global.BufferSize(width, height, memoryFormat, fourChannel);
@@ -159,7 +159,7 @@ namespace PakonLib
             return new BoundingRectangleMetrics(boundingWidth, boundingHeight, bufferByteCount);
         }
 
-        public void SaveToClientMemory(Scanner scanner, ScannerSettings scannerSettings, bool fourChannel)
+        public void RenderToBuffer(Scanner scanner, ScannerSettings scannerSettings, bool fourChannel)
         {
             BoundingRectangleMetrics boundingMetrics = FindBoundingRectangle(scanner, fourChannel);
             if (boundingMetrics.BufferByteCount == 0)
@@ -170,7 +170,7 @@ namespace PakonLib
             scanner.Unsafe.MemoryFormat = MemoryFormat;
             scanner.Unsafe.Allocate(boundingMetrics.BufferByteCount);
             scanner.Unsafe.NextBuffer(scanner);
-            scanner.ISave.SaveToClientMemory(scannerSettings.Type, index, saveControl, boundingMetrics.Width, boundingMetrics.Height, scalingMethod, memoryFormat, fourChannel);
+            scanner.Images.RenderToBuffer(scannerSettings.Type, index, saveControl, boundingMetrics.Width, boundingMetrics.Height, scalingMethod, memoryFormat, fourChannel);
         }
     }
 }

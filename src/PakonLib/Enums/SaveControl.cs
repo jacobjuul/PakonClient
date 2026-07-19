@@ -20,24 +20,61 @@ namespace PakonLib.Enums
 
         public static SaveControl None => new SaveControl(0);
 
+        /// <summary>
+        /// Uses the original framed image dimensions rather than a display or save size limit.
+        /// </summary>
         public static SaveControl SizeOriginal => new SaveControl(SAVE_CONTROL_000.SAV_SizeOriginal);
 
+        /// <summary>
+        /// Limits the output dimensions to TLX's display-size limit.
+        /// </summary>
         public static SaveControl SizeLimitForDisplay => FromName("SAV_SizeLimitForDisplay");
 
+        /// <summary>
+        /// Limits the output dimensions to TLX's save-size limit.
+        /// </summary>
         public static SaveControl SizeLimitForSave => FromName("SAV_SizeLimitForSave");
 
+        /// <summary>
+        /// Applies the picture rotation recorded in TLX metadata.
+        /// </summary>
         public static SaveControl UseCurrentRotation => FromName("SAV_UseCurrentRotation");
 
+        /// <summary>
+        /// Saves from TLX's low-resolution buffer instead of the normal framed buffer.
+        /// </summary>
         public static SaveControl UseLoResBuffer => new SaveControl(SAVE_CONTROL_000.SAV_UseLoResBuffer);
 
+        /// <summary>
+        /// Applies scratch removal if the scan contains an eligible infrared/scratch-removal result.
+        /// </summary>
         public static SaveControl UseScratchRemovalIfAvailable => FromName("SAV_UseScratchRemovalIfAvailable");
 
+        /// <summary>
+        /// Applies TLX/PakonImau color correction, including its configured color transforms and LUTs,
+        /// to the decoded, cropped planar frame before TLX copies or encodes the rendered output.
+        /// Native correction uses a matrix-derived save context and initialized lookup table; this is
+        /// host-side processing, not an FX35 driver setting.
+        /// </summary>
         public static SaveControl UseColorCorrection => FromName("SAV_UseColorCorrection");
 
+        /// <summary>
+        /// Applies automatic per-scene color balancing during save. Requires
+        /// <see cref="UseColorCorrection"/>; TLX rejects this flag without it.
+        /// </summary>
         public static SaveControl UseColorSceneBalance => FromName("SAV_UseColorSceneBalance");
 
+        /// <summary>
+        /// Applies the configured PakonImau post-correction adjustments after color correction/balancing,
+        /// including adjustment LUTs, contrast, sharpening, and optional saturation/B&amp;W effect profiles.
+        /// Requires <see cref="UseColorSceneBalance"/> (and therefore color correction);
+        /// TLX rejects this flag without scene balance.
+        /// </summary>
         public static SaveControl UseColorAdjustments => FromName("SAV_UseColorAdjustments");
 
+        /// <summary>
+        /// Includes TLX's client-memory file header in the returned buffer.
+        /// </summary>
         public static SaveControl FileHeader => FromName("SAV_FileHeader");
 
         public static SaveControl FastUpdate8BitDib => FromName("SAV_FastUpdate8BitDib");
@@ -46,7 +83,17 @@ namespace PakonLib.Enums
 
         public static SaveControl DoNotScaleUp => FromName("SAV_DoNotScaleUp");
 
+        /// <summary>
+        /// Legacy KCDFS color processing flag. The installed TLX type library marks this control obsolete.
+        /// </summary>
         public static SaveControl UseColorKcdfs => FromName("SAV_UseColorKcdfs");
+
+        /// <summary>
+        /// The complete host-side color-processing set used by default for C-41 color negatives:
+        /// correction, automatic scene balance, and configured color adjustments.
+        /// </summary>
+        public static SaveControl C41ColorProcessingDefaults =>
+            UseColorCorrection | UseColorSceneBalance | UseColorAdjustments;
 
         public static SaveControl DiskSaveDefaults => UseCurrentRotation | UseScratchRemovalIfAvailable;
 

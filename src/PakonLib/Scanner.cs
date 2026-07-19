@@ -32,7 +32,12 @@ namespace PakonLib
             }
         }
 
-        public PakonLib.Interfaces.IScanPictures IScan
+        /// <summary>
+        /// Provides scanner transport, calibration, and scan-control operations.
+        /// The current implementation delegates to TLX/TLA; its normal scan path ultimately uses
+        /// the FX35 driver's asynchronous raw-data ring rather than rendered-image buffers.
+        /// </summary>
+        public PakonLib.Interfaces.IScanPictures Scanning
         {
             get
             {
@@ -40,7 +45,13 @@ namespace PakonLib
             }
         }
 
-        public PakonLib.Interfaces.ISavePictures ISave
+        [Obsolete("Use Scanning. This legacy name mirrors the TLX COM interface rather than the client API.")]
+        public PakonLib.Interfaces.IScanPictures IScan => Scanning;
+
+        /// <summary>
+        /// Provides access to rendered scan images and their output metadata.
+        /// </summary>
+        public PakonLib.Interfaces.IImageRenderer Images
         {
             get
             {
@@ -48,7 +59,10 @@ namespace PakonLib
             }
         }
 
-        public PakonLib.Interfaces.ISavePictures3 ISave3
+        /// <summary>
+        /// Provides extended metadata for framed images.
+        /// </summary>
+        public PakonLib.Interfaces.ISavePictures3 ImageMetadata
         {
             get
             {
@@ -135,7 +149,7 @@ namespace PakonLib
                     switch (status)
                     {
                         case WorkerThreadProgress.ProgressCompleteValue:
-                            ISave.ClientMemoryBufferDismissAll();
+                            Images.ClearRenderBuffers();
                             Unsafe.Deallocate();
                             break;
                         default:
@@ -183,8 +197,8 @@ namespace PakonLib
             {
                 if (scannerSave != null)
                 {
-                    scannerSave.SaveCancel();
-                    scannerSave.ClientMemoryBufferDismissAll();
+                    scannerSave.CancelRender();
+                    scannerSave.ClearRenderBuffers();
                 }
             }
             catch

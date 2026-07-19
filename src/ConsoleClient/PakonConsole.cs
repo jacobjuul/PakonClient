@@ -214,7 +214,7 @@ namespace ConsoleClient
             if (IsCommand(command, "move-oldest"))
             {
                 EnsureScanner(false);
-                scanner.ISave.MoveOldestRollToSaveGroup();
+                scanner.Images.MoveOldestRollToSaveGroup();
                 Console.WriteLine("Moved oldest roll to save group.");
                 return 0;
             }
@@ -278,7 +278,7 @@ namespace ConsoleClient
             if (IsCommand(command, "cancel-save"))
             {
                 EnsureScanner(false);
-                scanner.ISave.SaveCancel();
+                scanner.Images.CancelRender();
                 Console.WriteLine("Save cancel requested.");
                 return 0;
             }
@@ -447,7 +447,7 @@ namespace ConsoleClient
             try
             {
                 scanner.IScan.ScanCancel();
-                scanner.ISave.SaveCancel();
+                scanner.Images.CancelRender();
                 Console.WriteLine("Cancel requested. Press Ctrl+C again after the operation stops to exit.");
             }
             catch

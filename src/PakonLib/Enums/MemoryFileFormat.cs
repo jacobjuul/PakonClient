@@ -5,6 +5,8 @@ namespace PakonLib.Enums
 {
     /// <summary>
     /// Provides a friendly wrapper around TLX <see cref="FILE_FORMAT_SAVE_TO_MEMORY_000"/> values.
+    /// These describe processed image-renderer output delivered through <see cref="Scanner.Images"/>,
+    /// not the FX35 driver's raw packets or its PFS staging files.
     /// </summary>
     public readonly struct MemoryFileFormat : IEquatable<MemoryFileFormat>
     {
@@ -20,6 +22,10 @@ namespace PakonLib.Enums
 
         public static MemoryFileFormat Dib8 { get; } = new MemoryFileFormat(FILE_FORMAT_SAVE_TO_MEMORY_000.iFILE_FORMAT_SAVE_TO_MEMORY_DIB_8);
 
+        /// <summary>
+        /// TLX-rendered planar 16-bit image output. This is the most useful current bridge toward
+        /// offline color experiments once the native planar-file contract is fully mapped.
+        /// </summary>
         public static MemoryFileFormat Planar16 { get; } = new MemoryFileFormat(FILE_FORMAT_SAVE_TO_MEMORY_000.iFILE_FORMAT_SAVE_TO_MEMORY_PLANAR_16);
 
         public static MemoryFileFormat Planar8 { get; } = new MemoryFileFormat(FILE_FORMAT_SAVE_TO_MEMORY_000.iFILE_FORMAT_SAVE_TO_MEMORY_PLANAR_8);

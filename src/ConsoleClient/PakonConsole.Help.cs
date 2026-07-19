@@ -433,6 +433,7 @@ namespace ConsoleClient
             Console.WriteLine("  --strip-mode: full-roll");
             Console.WriteLine("  --scan-control flags: " + string.Join(", ", GetSupportedScanControlNames()));
             Console.WriteLine("  --save-control flags: " + string.Join(", ", GetSupportedSaveControlNames()));
+            Console.WriteLine("  C-41 save default: color correction, scene balance, and color adjustments (omit --save-control).");
             Console.WriteLine("  --index: all, selected, current, first, end");
             Console.WriteLine("  --selection: none, selected, hidden");
             Console.WriteLine("  --format: jpeg, bmp, tiff, exif, png, raw");

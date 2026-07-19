@@ -33,7 +33,7 @@ namespace ConsoleClient
 
             if (options.GetBool(true, "move-to-save-group", "move"))
             {
-                scanner.ISave.MoveOldestRollToSaveGroup();
+                scanner.Images.MoveOldestRollToSaveGroup();
                 Console.WriteLine("Moved oldest roll to save group.");
             }
         }
@@ -98,7 +98,7 @@ namespace ConsoleClient
         {
             EnsureScanner(false);
             var roll = options.GetInt("roll", 0);
-            var count = scanner.ISave.GetPictureCountScanGroup(roll);
+            var count = scanner.Images.GetPictureCountScanGroup(roll);
             Console.WriteLine("Scan group roll {0}", roll);
             Console.WriteLine("  Strips:   {0}", count.StripCount);
             Console.WriteLine("  Pictures: {0}", count.PictureCount);
@@ -108,7 +108,7 @@ namespace ConsoleClient
         private void PrintSaveGroupCount()
         {
             EnsureScanner(false);
-            var count = scanner.ISave.GetPictureCountSaveGroup();
+            var count = scanner.Images.GetPictureCountSaveGroup();
             Console.WriteLine("Save group");
             Console.WriteLine("  Rolls:     {0}", count.RollCount);
             Console.WriteLine("  Strips:    {0}", count.StripCount);
@@ -121,11 +121,11 @@ namespace ConsoleClient
         {
             if (ShouldUseRawSave(options, command))
             {
-                SaveToClientMemory(options);
+                RenderToBuffer(options);
             }
             else
             {
-                SaveToDisk(options);
+                RenderToFile(options);
             }
         }
 
@@ -156,7 +156,7 @@ namespace ConsoleClient
             return requestedFormat == "raw" || requestedFormat == "png" || requestedFormat == "png16";
         }
 
-        private void SaveToDisk(OptionSet options)
+        private void RenderToFile(OptionSet options)
         {
             EnsureScanner(false);
             ResetProgress(WorkerThreadOperation.SaveError);
@@ -164,7 +164,7 @@ namespace ConsoleClient
             ApplyOutputDirectory(options);
 
             var index = ParsePictureIndex(options.Get("index", "all"));
-            var saveControl = ParseSaveControl(options.Get("save-control", "size-original"));
+            var saveControl = ResolveSaveControl(options);
             var width = options.GetInt("width", 0);
             var height = options.GetInt("height", 0);
             var scaling = ParseScalingMethod(options.Get("scaling", "bicubic"));
@@ -174,15 +174,15 @@ namespace ConsoleClient
             var colorBits = options.GetInt("color-bits", 24);
             var invertSavedImages = ShouldInvertSavedImages(options);
 
-            Console.WriteLine("Saving to disk: {0}, {1}, {2}, {3} dpi, {4} bit", index, format, saveControl, dpi, colorBits);
-            scanner.ISave.SaveToDisk(index, saveControl, width, height, scaling, format, compression, dpi, colorBits);
-            WaitForCompletion("save");
+            Console.WriteLine("Rendering to file: {0}, {1}, {2}, {3} dpi, {4} bit", index, format, saveControl, dpi, colorBits);
+            scanner.Images.RenderToFile(index, saveControl, width, height, scaling, format, compression, dpi, colorBits);
+            WaitForCompletion("file render");
             if (invertSavedImages)
             {
                 InvertSavedImages(options, format);
             }
 
-            Console.WriteLine("Save complete.");
+            Console.WriteLine("File render complete.");
         }
 
         private void ApplyOutputDirectory(OptionSet options)
@@ -194,16 +194,34 @@ namespace ConsoleClient
             }
 
             Directory.CreateDirectory(directory);
-            var count = scanner.ISave.GetPictureCountSaveGroup();
+            var count = scanner.Images.GetPictureCountSaveGroup();
             var prefix = options.Get("prefix", "pakon");
 
             for (var index = 0; index < count.PictureCount; index++)
             {
-                var info = scanner.ISave3.GetPictureInfo3(index);
+                var info = scanner.ImageMetadata.GetPictureInfo3(index);
                 var frameNumber = info.FrameNumber <= 0 ? index + 1 : info.FrameNumber;
                 var fileName = prefix + "-" + (index + 1).ToString("0000", CultureInfo.InvariantCulture);
-                scanner.ISave.PutPictureInfo(index, frameNumber, fileName, directory, info.Rotation, info.SelectedHidden);
+                scanner.Images.PutPictureInfo(index, frameNumber, fileName, directory, info.Rotation, info.SelectedHidden);
             }
+        }
+
+        private SaveControl ResolveSaveControl(OptionSet options)
+        {
+            var saveControl = ParseSaveControl(options.Get("save-control", "size-original"));
+            if (options.Has("save-control"))
+            {
+                return saveControl;
+            }
+
+            var filmColorValue = options.Get("film-color", null);
+            var filmColor = string.IsNullOrEmpty(filmColorValue)
+                ? (lastScanFilmColor ?? FilmColor.Negative)
+                : ParseFilmColor(filmColorValue);
+
+            return filmColor == FilmColor.Negative
+                ? saveControl | SaveControl.C41ColorProcessingDefaults
+                : saveControl;
         }
 
         private bool ShouldInvertSavedImages(OptionSet options)
@@ -225,10 +243,10 @@ namespace ConsoleClient
             var overrideDirectory = ResolveUserPath(options.Get("directory", null));
             var savedIndex = ParsePictureIndex(options.Get("index", "all"));
             var extension = ExtensionFor(format);
-            var count = scanner.ISave.GetPictureCountSaveGroup();
+            var count = scanner.Images.GetPictureCountSaveGroup();
             for (var index = 0; index < count.PictureCount; index++)
             {
-                var info = scanner.ISave3.GetPictureInfo3(index);
+                var info = scanner.ImageMetadata.GetPictureInfo3(index);
                 if (savedIndex == PictureIndex.AllSelected && info.SelectedHidden != PictureSelection.Selected)
                 {
                     continue;
@@ -300,7 +318,7 @@ namespace ConsoleClient
             return ImageFormat.Jpeg;
         }
 
-        private void SaveToClientMemory(OptionSet options)
+        private void RenderToBuffer(OptionSet options)
         {
             EnsureScanner(false);
             ResetProgress(WorkerThreadOperation.SaveError);
@@ -309,7 +327,7 @@ namespace ConsoleClient
             Directory.CreateDirectory(directory);
             var prefix = options.Get("prefix", "pakon");
             var index = ParsePictureIndex(options.Get("index", "all"));
-            var saveControl = ParseSaveControl(options.Get("save-control", "size-original"));
+            var saveControl = ResolveSaveControl(options);
             var width = options.GetInt("width", 0);
             var height = options.GetInt("height", 0);
             var scaling = ParseScalingMethod(options.Get("scaling", "bicubic"));
@@ -382,14 +400,14 @@ namespace ConsoleClient
                 }
             };
 
-            Console.WriteLine("Saving to client memory: {0}, {1}, {2}, {3} byte buffers, {4} conversion worker(s)", index, format, outputFormat, bufferBytes, conversionWorkers);
+            Console.WriteLine("Rendering to buffers: {0}, {1}, {2}, {3} byte buffers, {4} conversion worker(s)", index, format, outputFormat, bufferBytes, conversionWorkers);
             scanner.Unsafe.Allocate(bufferBytes);
             scanner.Unsafe.NextBuffer(scanner);
             scanner.Unsafe.NextBuffer(scanner);
-            scanner.ISave.SaveToClientMemory(GetScannerInfo().ScannerType, index, saveControl, width, height, scaling, format, fourChannel);
-            WaitForCompletion("memory save");
+            scanner.Images.RenderToBuffer(GetScannerInfo().ScannerType, index, saveControl, width, height, scaling, format, fourChannel);
+            WaitForCompletion("buffer render");
             WaitForRawConversions(conversionTasks, conversionTasksLock);
-            Console.WriteLine("Memory save complete.");
+            Console.WriteLine("Buffer render complete.");
         }
 
         private static void WaitForRawConversions(List<Task> conversionTasks, object conversionTasksLock)
@@ -428,7 +446,7 @@ namespace ConsoleClient
                 return new BoundingRectangleMetrics(width, height, Global.BufferSize(width, height, format, fourChannel));
             }
 
-            var count = scanner.ISave.GetPictureCountSaveGroup();
+            var count = scanner.Images.GetPictureCountSaveGroup();
             var startIndex = 0;
             var endIndex = count.PictureCount;
 
@@ -456,7 +474,7 @@ namespace ConsoleClient
             {
                 if (index == PictureIndex.AllSelected)
                 {
-                    var info = scanner.ISave3.GetPictureInfo3(currentIndex);
+                    var info = scanner.ImageMetadata.GetPictureInfo3(currentIndex);
                     if (info.SelectedHidden != PictureSelection.Selected)
                     {
                         continue;
@@ -464,8 +482,8 @@ namespace ConsoleClient
                 }
 
                 var framing = saveControl.HasFlag(SaveControl.UseLoResBuffer)
-                    ? scanner.ISave.GetPictureFramingUserInfoLowRes(currentIndex)
-                    : scanner.ISave.GetPictureFramingUserInfo(currentIndex);
+                    ? scanner.Images.GetPictureFramingUserInfoLowRes(currentIndex)
+                    : scanner.Images.GetPictureFramingUserInfo(currentIndex);
                 var frameWidth = framing.Right + 1 - framing.Left;
                 var frameHeight = framing.Bottom + 1 - framing.Top;
                 if (frameWidth <= 0 || frameHeight <= 0)
@@ -499,17 +517,17 @@ namespace ConsoleClient
         private void PrintPictureInfo(OptionSet options)
         {
             EnsureScanner(false);
-            PrintPictureInfo(scanner.ISave3.GetPictureInfo3(options.GetInt("index", 0)));
+            PrintPictureInfo(scanner.ImageMetadata.GetPictureInfo3(options.GetInt("index", 0)));
         }
 
         private void ListPictures(OptionSet options)
         {
             EnsureScanner(false);
-            var count = scanner.ISave.GetPictureCountSaveGroup();
+            var count = scanner.Images.GetPictureCountSaveGroup();
             var limit = options.GetInt("limit", count.PictureCount);
             for (var index = 0; index < Math.Min(limit, count.PictureCount); index++)
             {
-                var info = scanner.ISave3.GetPictureInfo3(index);
+                var info = scanner.ImageMetadata.GetPictureInfo3(index);
                 Console.WriteLine("#{0}: frame={1} name={2} file={3} dir={4} rotation={5} state={6}",
                     index,
                     info.FrameNumber,
@@ -525,13 +543,13 @@ namespace ConsoleClient
         {
             EnsureScanner(false);
             var index = options.GetInt("index", 0);
-            var current = scanner.ISave3.GetPictureInfo3(index);
+            var current = scanner.ImageMetadata.GetPictureInfo3(index);
             var frame = options.GetInt("frame", current.FrameNumber);
             var file = options.Get("file", current.FileName);
             var directory = options.Get("directory", current.Directory);
             var rotation = options.GetInt("rotation", current.Rotation);
             var state = ParsePictureSelection(options.Get("selection", current.SelectedHidden.ToString()));
-            scanner.ISave.PutPictureInfo(index, frame, file, directory, rotation, state);
+            scanner.Images.PutPictureInfo(index, frame, file, directory, rotation, state);
             Console.WriteLine("Updated picture #{0}.", index);
         }
 
@@ -541,7 +559,7 @@ namespace ConsoleClient
             var index = ParsePictureIndex(options.Get("index", "current"));
             var state = ParsePictureSelection(options.Get("selection", "selected"));
             var skipHidden = options.GetBool("skip-hidden");
-            scanner.ISave.PutPictureSelection(index, state, skipHidden);
+            scanner.Images.PutPictureSelection(index, state, skipHidden);
             Console.WriteLine("Selection updated: {0} -> {1}.", index, state);
         }
 
@@ -550,8 +568,8 @@ namespace ConsoleClient
             EnsureScanner(false);
             var index = options.GetInt("index", 0);
             var framing = options.GetBool("low-res")
-                ? scanner.ISave.GetPictureFramingUserInfoLowRes(index)
-                : scanner.ISave.GetPictureFramingUserInfo(index);
+                ? scanner.Images.GetPictureFramingUserInfoLowRes(index)
+                : scanner.Images.GetPictureFramingUserInfo(index);
             Console.WriteLine("Picture #{0} framing: left={1} top={2} right={3} bottom={4}",
                 index,
                 framing.Left,

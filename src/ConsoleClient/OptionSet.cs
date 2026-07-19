@@ -67,6 +67,11 @@ namespace ConsoleClient
             return values.TryGetValue(key, out value) ? value : defaultValue;
         }
 
+        public bool Has(string key)
+        {
+            return values.ContainsKey(key);
+        }
+
         public bool GetBool(params string[] keys)
         {
             return GetBool(false, keys);

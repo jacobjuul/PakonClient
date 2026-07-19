@@ -6,6 +6,11 @@ using PakonLib.Enums;
 
 namespace PakonLib 
 {
+    /// <summary>
+    /// Manages the caller-owned buffers used by TLX's rendered-image delivery path.
+    /// These are post-processing output buffers registered with <see cref="Scanner.Images"/>;
+    /// they are not the FX35 driver's raw scan-acquisition ring buffer.
+    /// </summary>
     public class ScannerUnsafe
     {
         private const int TlxClientPointerBytes = 4;
@@ -44,6 +49,9 @@ namespace PakonLib
 
         public unsafe void Allocate(int bufferByteCount)
         {
+            // TLX's ClientMemoryBufferAdd ABI receives an x86 pointer value, not a managed handle.
+            // This limitation belongs to the legacy COM renderer; a future direct-driver acquisition
+            // path will use a separate RING_TAIL allocation and must not reuse these buffers.
             if (IntPtr.Size != TlxClientPointerBytes)
             {
                 throw new PlatformNotSupportedException("TLX client memory buffers use 32-bit pointer addresses. Run PakonClient as x86.");
@@ -91,7 +99,7 @@ namespace PakonLib
                     index++;
                     buffer++;
                 }
-                scanner.ISave.ClientMemoryBufferAdd(clientBufferAddress1, bufferSize);
+                scanner.Images.RegisterRenderBuffer(clientBufferAddress1, bufferSize);
             }
             else
             {
@@ -103,7 +111,7 @@ namespace PakonLib
                     index++;
                     buffer++;
                 }
-                scanner.ISave.ClientMemoryBufferAdd(clientBufferAddress2, bufferSize);
+                scanner.Images.RegisterRenderBuffer(clientBufferAddress2, bufferSize);
             }
             usingFirstBuffer = !usingFirstBuffer;
         }
@@ -112,6 +120,9 @@ namespace PakonLib
         {
             if (clientBuffer1 != null)
             {
+                // At this point TLX has already completed its staging, framing, and requested
+                // render pipeline. The SiPlanar header describes renderer output, not scanner
+                // packets or the intermediate PFS raw stream.
                 byte* buffer = usingFirstBuffer ? clientBuffer1 : clientBuffer2;
                 uint bytesToCopy = 0u;
 
