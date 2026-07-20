@@ -1,5 +1,124 @@
 # TLX native low-level notes
 
+This is the evidence ledger for static reverse engineering. It is intentionally
+specific: function labels, offsets, CLSIDs/IIDs, packet bytes, registry paths,
+and confidence boundaries belong here. Practical implementation guidance lives
+in [tlx.md](tlx.md); the organised colour reference lives in
+[tlx-colour.md](tlx-colour.md).
+
+## Reading guide
+
+| Evidence area | Sections |
+| --- | --- |
+| Direct TLC ABI and initialization | **Direct TLC initialization**, **TLC `InitializeScanner` execution path**, **scanner-information dispatch boundary** |
+| Driver endpoint and packet transport | **Driver endpoint opening**, **TLB / F135 comparison**, **normal-startup packet family**, **PPB interrupt status** |
+| Colour/Ansel ABI evidence | **PakonImau colour entry points** through **PakonImau dynamic-host ABI** |
+| TLX backend selection and raw staging | **TLX facade and TLA/TLB/TLC implementation selection** and **PFS / driver pipeline addresses** |
+
+Colour evidence remains here so its source is not lost, but new explanatory
+colour documentation should be written in `tlx-colour.md`.
+
+## Direct TLC initialization and callback ABI (type-library evidence)
+
+TLC's registered `TLAMain` class has CLSID
+`{6449DE65-60A9-4A45-A3A1-337F5E6B41E0}`. Its `ITLAMain` interface is
+`{2E37F1D3-50D0-4345-8C0D-4481AFF29EB9}` and exposes dispatch member 1:
+
+```text
+InitializeScanner(int initializationFlags,
+                  int memoryTimeoutMilliseconds,
+                  int sharedMemoryBytes)
+```
+
+This differs from public TLX's two-argument facade. Callback registration is
+instead `ILongOpsCB` (`{E4724BBF-4C27-4AB3-92A8-CD2D45B87682}`), an IUnknown
+interface with `int CBAdvise(ICallBackClient)`, `CBUnadvise(int)`, and
+`CBHelperNTS(int, int)`. `ICallBackClient`
+(`{31E3E438-9AAD-408A-81FA-BBCA917907D2}`) receives
+`Awake(int operation, int status)`. These GUIDs and signatures were recovered
+from TLC.dll's own type library with TlbImp, not inferred from TLX.
+
+**Important boundary, confirmed against the installed TLX interop assembly.**
+TLC's callback interface is not interchangeable with TLX's despite the shared
+`Awake(int operation, int status)` method shape. Public TLX uses
+`TLXLib.ICallBackClient` with IID `{1A2F6DDF-AAD8-40FB-BAAB-4FEE015ADCD5}`.
+Trying to pass TLC's `{31E3E438-9AAD-408A-81FA-BBCA917907D2}` callback
+interface to `TLXMain.CBAdvise` is invalid. Conversely, TLC's `ILongOpsCB`
+IID is not implemented by `TLXMain`. A bridge must bind each COM facade through
+its own type-library declarations; shared method names do not establish COM
+interface compatibility.
+
+The new x86 bridge implements these minimal declarations locally, holds the
+callback sink strongly for the TLC session lifetime, and releases it only after
+`CBUnadvise`. The .NET 10 process sees only named-pipe messages and raw
+operation/status values.
+
+### Callback queue semantics (TLA static evidence)
+
+TLA does not invoke client callbacks directly from scan/disk workers.
+`TLA!FUN_10038b40` validates an operation number in the inclusive range
+`0..42`, allocates a small `(operation, status)` work item, appends it under a
+critical section, and signals `m_hEventCallBackClient`. A dedicated callback
+worker drains that queue and ultimately invokes the registered client sink.
+
+Callback ordering is therefore serialized by a native queue while producers
+remain asynchronous. The dispatcher preserves `status` unchanged; its meaning
+depends on the operation family. The managed bridge should preserve raw pairs,
+serialize delivery, and only then project known operations into typed events.
+
+## TLC `InitializeScanner` execution path (static-code evidence)
+
+**Confirmed, TLC.dll build currently installed.** The actual implementation of
+the three-argument TLC `ITLAMain.InitializeScanner` call is
+`TLC!FUN_1004a7a0`. It is asynchronous; COM success means that TLC accepted
+the request and started initialization, not that a scanner is ready.
+
+The method records the supplied values in the embedded
+`CN_CiThreadDataInitializeScanner` state and creates a suspended native worker
+at `TLC!FUN_1003d930`, which it then resumes. The recovered field roles are:
+
+| State offset | Source argument | Established role |
+| --- | --- | --- |
+| `+0x08` | `initializationFlags` | Forwarded to the scan-driver initializer. Its only recovered TLC read is `flags & 0x2` (firmware-update request). |
+| `+0x0c` | `memoryTimeoutMilliseconds` | Required to be at least 1,000; passed to the client-memory/shared-memory setup helper. |
+| `+0x10` | `sharedMemoryBytes` | Required to be non-negative; zero skips mapping creation, non-zero creates the mapping. |
+
+Before it starts the worker, TLC refuses a concurrent/previously active
+initialization state, validates the timeout and mapping size, marshals the
+registered callback interface into a stream, and waits up to roughly three
+seconds for the worker's startup result. This short wait is a startup handshake,
+not the public memory timeout.
+
+The worker:
+
+1. calls `CoInitializeEx(..., COINIT_MULTITHREADED)`;
+2. recovers the callback interface from the marshalled stream and reports its
+   initial callback state;
+3. when `sharedMemoryBytes != 0`, creates an event plus a pagefile-backed,
+   GUID-named `CreateFileMapping`/`MapViewOfFile` region of that size;
+4. creates the scanner/configuration and acquisition-side objects, including
+   the scanner object that later owns packet events and the driver pipeline.
+
+This directly explains the third argument that TLX hides: it is a request for a
+TLC-managed shared-memory region, not an image-quality or scanner-control
+setting. A new managed API should call it `sharedMemoryBytes` (or omit it until
+managed capture uses it), rather than inherit an ambiguous legacy save name.
+
+`INITIALIZE_CSharpClient` (`0x40000000`) is copied into the initialization
+state and forwarded into the scan-driver initializer, but is not used there.
+The only read of that initializer's recovered flag field is `flags & 0x2`,
+which is the type-library's `INITIALIZE_FirmwareUpdate` bit. A full
+instruction scan found no TLC test or forwarding of `0x40000000` itself.
+Therefore this installed TLC build treats the C#-client bit as a no-op; it is a
+legacy facade/compatibility label, not a direct-TLC scanner setting. Do not
+carry it into the managed direct-TLC default.
+
+`INITIALIZE_FirmwareUpdate` (`0x2`) is the sole recovered TLC consumer of this
+control word. Firmware update is permanently out of scope for this project:
+the bridge rejects that bit before making the COM call, and no managed probe or
+future implementation may issue firmware-update commands. It may be examined
+only through static analysis to ensure it remains excluded.
+
 This file records native calling contracts, memory/layout facts, and analysis
 addresses recovered from the Pakon binaries.  It deliberately keeps uncertain
 names and hypotheses separate from the implementation guidance in `tlx.md`.
@@ -38,7 +157,178 @@ owning TLC host constructs private contexts and adapters that are only partly
 recovered. The documented function-pointer table, renderer call sites, and
 Ansel descriptors are the route to removing that limitation safely.
 
-## PakonImau colour entry points
+The active implementation of the first layer is `src\Pakon.Transport` in the
+new root `Pakon.sln`. Its .NET 10 CLI deliberately performs only the confirmed
+driver metadata IOCTL. The prior x86 experiment is preserved under
+`src\Legacy\PakonTransportProbe`; it is not the location for new work.
+
+## Driver endpoint opening (TLC + driver-source evidence)
+
+**Confirmed.** Before TLC sends an initialization packet,
+`TLC!FUN_10010390` calls `TLC!FUN_1000c730` to open the FX35 endpoint. That
+function uses:
+
+```text
+CreateFileW("\\.\PakonX35",
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED)
+```
+
+It retains the handle and reports a TLC `CreateFile` error on failure. It does
+not send an IOCTL or packet itself. The equivalent F135 backend is TLB and
+uses `\\.\Pakon135`; endpoint names are case-insensitive on Windows.
+
+The available FX35 driver source independently establishes the names at
+`FX35USB/driver/FX35USB.cpp`: an F135 build publishes `PAKON135`, an F335
+build publishes `PAKONX35`, and the F235 build publishes `LOOPBACK`. Its
+`IRP_MJ_CREATE` handler only increments an internal open-handle counter and
+completes successfully. Therefore opening a handle is safe for endpoint
+discovery; scanner state first changes only at a later IOCTL/packet stage.
+
+The current diagnostic probes deliberately use synchronous handles because
+they issue one short, completed request. A future managed acquisition
+transport must use `FILE_FLAG_OVERLAPPED`, matching TLC, for its long-lived
+bulk-read/ring handle. Do not interpret a successful `CreateFile` as scanner
+initialization or readiness.
+
+## TLB / F135 comparison (static-code evidence)
+
+The real F135 path is TLB, so TLC cannot be treated as the authoritative
+startup sequence. The comparison so far proves:
+
+| Item | TLC / X35 | TLB / F135 | Result |
+| --- | --- | --- | --- |
+| Device path | `\\.\PakonX35` | `\\.\Pakon135` | Backend-specific endpoint only. |
+| Handle options | read/write, share read/write, `OPEN_EXISTING`, normal + overlapped | Same | Shared transport-open contract. |
+| Packet transport | `IOCTL 0x222090`, 36-byte reply, overlapped completion, 2-second wait | Same | Shared packet envelope. |
+| First post-open packet | `04 03 10 00 85` | `04 03 10 00 85` | Shared first setup command. |
+| Subsequent startup | TLC follows with its type-`01` `10 02 03` query | TLB conditionally writes one byte to `10 8F`, with 100-ms waits and later status probes | Not equivalent; do not replay TLC startup for F135. |
+
+TLB's extra sequence is now structurally classified, though its device effect
+is still unknown. `TLB!FUN_10009ba0` builds a type-`02` one-byte write through
+`FUN_10009ae0`, so its two observed forms are:
+
+```text
+02 04 10 01 8F 00
+02 04 10 01 8F 01
+```
+
+The first form is issued when TLB state `+0xc4` is nonzero. The second is
+conditionally issued when state `+0xbc` is negative; TLB then waits 100 ms,
+issues a type-`04` query `04 03 28 00 00`, and may restore `10 8F` to zero.
+It subsequently tries type-`04` status queries at addresses `44`, `46`, `24`,
+and `26`; it accepts a type-`07` response as the affirmative result. These
+are normal-startup state operations, **not** safe diagnostic commands.
+
+They remain excluded from the managed transport. The direct replacement must
+use a model-specific startup state machine until their state fields and device
+effects have been compared with a controlled legacy trace.
+
+### First post-open initialization packet
+
+**Confirmed bytes; unknown hardware effect.** Immediately after the successful
+open, TLC's initialization routine calls its packet helper with the stack-built
+request:
+
+```text
+04 03 10 00 85
+```
+
+The request builder establishes the framing: byte `0` is `04`, byte `1` is the
+payload-derived length `03`, and the remaining bytes are `10 00 85`. It is
+issued through the normal `IOCTL_PAKON_SEND_AND_RECEIVE_PACKET` wrapper with
+the usual overlapped 36-byte response handling and retry/error machinery.
+
+This is the first command after opening, but it is **not** classified as
+read-only or safe. Its name and hardware effect have not been recovered; it
+must not be sent by `Pakon.Transport` or a diagnostic probe. The next static
+step is to follow its response parser and the subsequent initialization calls
+to identify whether it is a configuration read, mode change, or another
+stateful setup operation.
+
+### Recovered normal-startup packet family (TLC)
+
+The initialization routine immediately follows `04 03 10 00 85` with a
+type-`01` request `01 03 10 02 03`. Its helper returns a 16-bit result to the
+caller and retries the request up to three times. If a response-status bit
+`0x20` is set, TLC reissues `04 03 10 00 85`, waits 100 ms, and retries. The
+meaning of selector `10 02 03` and the returned value remain unknown, so both
+packets are prohibited from managed probes.
+
+Later in the same TLC initialization routine, static calls establish these
+additional packet *families* but not yet their safe effects:
+
+| Call form | Constructed request family | Static role |
+| --- | --- | --- |
+| `FUN_1000ddd0(..., 0x34, 0x9a, ...)` | `04 03 34 00 9A` | Fixed setup command. |
+| `FUN_1000df30(..., 0x34, 0x98, 0x0c, ...)` | Type `02`, address `34`, selector `98`, one-byte payload `0C` | Conditional setup write. |
+| `FUN_1000e1d0(..., 0x38, 0x0f, ...)` | `02 04 38 01 0B 0F` before an associated read | Firmware/software information exchange. It is analysis-only and must never be confused with the permanently prohibited firmware-update path. |
+| `FUN_1000d7c0(..., 0x38, 0x95, ..., 7, ...)` | Type `01`, address `38`, length `07`, followed by a seven-byte response copy | Reads an initialization information block. |
+
+These are a static packet inventory, not authorization to transmit them. They
+make the next comparison against TLB precise.
+
+## TLC scanner-information dispatch boundary
+
+The legacy public `TLXLib.IScanPictures` interface is **not** implemented
+directly by TLC. Its IID is `{AC3017C5-F047-4F45-BE66-3F7F5E4D3114}`; a direct
+`QueryInterface` on `TLC.TLAMain.1` correctly returns `E_NOINTERFACE` for it.
+This is further proof that `tlx.dll` is a COM facade/translator rather than a
+pass-through object.
+
+TLC instead exposes its own `IScanPictures` dispatch interface:
+
+| Item | Value |
+| --- | --- |
+| TLC `IScanPictures` IID | `{176CC928-A815-42EB-A20F-C1656477CA03}` |
+| `GetScannerInfo000` dispatch ID | `15` |
+| Arguments | 12 by-reference outputs: scanner type, ROM version, model, serial number, hardware version, TLA version, dark-point interval, portrait-mode value, scan-packet timeout, no-film timeout, lamp-saver seconds, TLX version. |
+
+The direct TLC query succeeds for this internal interface without invoking a
+scanner method. Its `IDispatch::Invoke` entry is `TLC+0x50a10`; that routine
+forwards to an internal generic ATL-style dispatch object/map rather than
+containing the getter's logic. Therefore we have **not** established that
+`GetScannerInfo000` sends a driver packet, nor that it is a current hardware
+status query. It may simply expose state/configuration loaded during scanner
+initialization.
+
+Do not add a `ReadScannerIdentity` method to `Pakon.Transport` from this API
+yet. The next trace must identify a TLC operation that reaches the recovered
+`IOCTL_PAKON_SEND_AND_RECEIVE_PACKET` wrapper, then capture and validate that
+specific request/response contract before the managed transport exposes it.
+
+## First recovered direct-driver status query: PPB interrupt status
+
+That next trace is now complete. `TLC!FUN_1000c800` is the FX35 packet wrapper:
+it calls `IOCTL_PAKON_SEND_AND_RECEIVE_PACKET` (`0x222090`) with an input size
+of `packet[1] + 2`, a fixed 36-byte response buffer, and a two-second wait. It
+accepts response types `1`, `3`, and `7`; types `1` and `3` must equal the
+request type.
+
+`TLC!FUN_1000d040`, called by TLC's hardware polling flow, sends this fixed
+packet and consumes its response:
+
+| Field | Value |
+| --- | --- |
+| Request | `03 01 10` |
+| Meaning | PPB interrupt-status query; recovered from the caller's diagnostic text `bDrvGetPpbInterruptStatus`. |
+| Expected response shape | `03 03 10 SS CC` (`SS` is the status byte; `CC` is an as-yet unnamed trailing protocol byte/check value). |
+| Status location | Response byte `3` (`SS`). |
+| Observed .NET 10 direct-driver response | `03 03 10 00 AA`, with `DeviceIoControl` reporting success but `bytesReturned = 0`. |
+
+The query is read-only in TLC: the surrounding code only ORs bits from `SS`
+into a host status accumulator and uses them to decide whether later polling
+is required. It is now exposed only as the explicit
+`--read-ppb-interrupt-status` diagnostic in `Pakon.Transport.Cli`; it is not
+part of automatic endpoint detection. The managed result retains the full
+36-byte buffer because the installed driver returns a zero byte count even
+when the buffer contains the valid packet above.
+
+## Colour and Ansel evidence
+
+### PakonImau colour entry points
 
 Confirmed exported functions and TLA call order:
 
@@ -71,7 +361,7 @@ creates its operations. Recovered operation names include
 `ImaICCEffectOperation_profileCombined`. This is direct evidence for the
 post-correction order documented in `tlx.md`.
 
-## Ansel: recovered contract and behaviour
+### Ansel: recovered contract and behaviour
 
 `Ansel` is PakonImau's name for the stateful **roll/scene colour-balancing
 engine**.  It is not an individual colour LUT and it is not a scanner-firmware
@@ -137,7 +427,7 @@ silently even when `Exlax` is set correctly. Run the COM client elevated for
 this one diagnostic scan, or pre-create `C:\test.txt` with write permission
 for the client account.
 
-## Runtime Ansel trace: `docs/ansel-diag-example.txt`
+### Runtime Ansel trace: `docs/ansel-diag-example.txt`
 
 **Confirmed runtime observations from an attached six-scene C-41 diagnostic:**
 
@@ -170,7 +460,7 @@ The semantics/scales of the five `classification` numbers and RGB `shifts`
 are still **unknown**. Treat them as observable regression targets, not as
 direct RGB offsets in a replacement.
 
-## Partial Ansel scene-descriptor layout
+### Partial Ansel scene-descriptor layout
 
 `PIAnselAddScene(context, scene, descriptor)` and
 `PIAnselColorSceneBalancePlanar(context, scene, descriptor)` consume the same
@@ -190,7 +480,7 @@ before `+0x48`, ownership rules, and `scene` handle lifetime still need a
 runtime trace or deeper decompilation. It does, however, explain exactly how
 the diagnostic's D-min and absent ISO/product metadata enter Ansel.
 
-## Renderer scene-balance invocation site (TLA and FX35 TLC)
+### Renderer scene-balance invocation site (TLA and FX35 TLC)
 
 `TLA!FUN_1002caa0` is the recovered indirect caller of the PakonImau host's
 `+0x64` Ansel slot. In the branch guarded by renderer-state bit `0x20`, it:
@@ -217,7 +507,7 @@ source/destination field preparation, replacement-on-success behaviour, and
 post-balance rotation path all match the TLA routine. Thus this conclusion is
 now confirmed for the scanner in scope, rather than inferred from TLA alone.
 
-### TLA temporary image-buffer object used by scene balance
+#### TLA temporary image-buffer object used by scene balance
 
 The renderer allocates a `0x60`-byte native buffer object before the Ansel
 call. Its construction/initialization establishes these fields:
@@ -247,7 +537,7 @@ recovered code, but it is still an installed-machine registry modification and
 must be treated as a reversible experiment rather than normal application
 behaviour.
 
-## TLA colour-host layout (partial)
+### TLA colour-host layout (partial)
 
 **Confirmed:** TLA holds two 64 KiB native buffers at host offsets `+0x40` and
 `+0x44`.  The colour-negative save call takes the pointer held at `+0x40` as
@@ -259,7 +549,7 @@ The installed two-column `ClientColNegLut.txt` is parsed into an intermediate
 argument to `PIColorCorrectColNegPlanarSave`.  TLA performs subsequent native
 lookup/log preparation before the call.
 
-## PakonImau dynamic-host ABI (TLA and FX35 TLC)
+### PakonImau dynamic-host ABI (TLA and FX35 TLC)
 
 TLA loads `PakonImau.dll` dynamically and resolves every required export with
 `GetProcAddress`; initialization fails if **any** expected export is missing.
@@ -337,3 +627,87 @@ only where TLA already has clearer decompilation.
 
 The PFS path retains raw staged bytes; it contains no image decode, colour
 conversion, or compression.
+
+### Raw line staging shape (new static trace)
+
+`TLA!FUN_100393a0` configures the scan-to-PFS worker and makes one important
+fact explicit: it uses **three** 16-bit components per scan-line unit in the
+normal path and **four** when its final boolean argument is set. The normal
+scan setup supplies the scratch/IR state (`scanControl & 0x8`) as that final
+argument; it supplies splice sensing (`scanControl & 0x4`) separately. The
+resulting worker stores `componentCount * lineWidth` 16-bit values per raw line
+and derives all byte counts as that value times two.
+
+`TLA!FUN_10037140` (`EventScanWriteToDisk`) waits for ring readiness, obtains
+the active `CiBufferHiRes` PFS backing object, and calls `FUN_10007160` to copy
+whole configured raw-line chunks. It handles wrap-around by copying the tail
+and head as separate chunks, advances its PFS logical position in 16-bit units,
+and asks the PFS object to complete/rotate a strip when necessary. It does not
+inspect component values, identify packet headers, unpack 12-bit samples, or
+produce planar RGB.
+
+```text
+driver ring packets -> 16-bit raw-line chunks -> PFS strip storage
+                                      ^
+                         decoder/framing begins after this point (unrecovered)
+```
+
+The `3` versus `4` component count is a capture/storage shape, not proof that
+all four components are conventional RGB+IR pixels at this point. The packet
+framing, channel order, 12-bit packing, and frame/strip boundary rules remain
+unrecovered and must not be guessed from this layout alone.
+
+### PFS-to-planar deinterleaver (recovered)
+
+The next PFS consumer is now identified. `FUN_100071d0` reads a selected raw
+span through `FUN_10007010`/`FUN_100065e0`, then calls `FUN_10004d60` when the
+read completes. `FUN_10004d60` is a line-oriented deinterleaver:
+
+- It treats the PFS input as 16-bit sample units and copies every component
+  sample into a distinct contiguous plane.
+- The destination object contains three equal `width * height` planes at its
+  base, `+planeBytes`, and `+2 * planeBytes`.
+- When its component-count field is `4`, it creates/uses a fourth equal plane
+  at `+3 * planeBytes`.
+- Its final direction argument selects forward or reverse line placement, so
+  vertical orientation is a decoder operation rather than an output-only DIB
+  choice.
+
+This recovers the first usable decoded representation:
+
+```text
+PFS span: [component 0, component 1, component 2 (, component 3)] per sample
+  -> contiguous 16-bit plane 0, plane 1, plane 2 (, plane 3)
+```
+
+The code does not perform bit shifts, masking, or packed-sample reconstruction;
+at this stage the data is already addressed as 16-bit units. It is therefore
+accurate to call this a **component deinterleaver**, not yet a complete
+sensor-to-linear-image decoder. The component colour assignment, numeric scale
+(including whether only 12 significant bits are used), raw packet
+synchronization, and frame/strip boundaries are still unresolved.
+
+### Acquisition lifecycle and failure boundary
+
+`TLA!FUN_1002fca0` coordinates the normal acquisition lifetime. It resets the
+packet-ready and disk-writer events, starts two workers (the ring-packet worker
+and `EventScanWriteToDisk`), starts one overlapped `ReadFile` over the ring
+region, and waits for both workers to reach their startup handshakes. A normal
+stop sequence is explicit and ordered:
+
+```text
+issue/await overlapped ring read
+  -> cancel outstanding ReadFile
+  -> set ring stop-transfer state and signal packet worker
+  -> wait (up to 500 ms) for driver transfer-in-progress to clear
+  -> signal disk writer to flush/complete PFS staging
+  -> wait for both workers (up to 6 s each)
+```
+
+The routine treats ring overflow, `CancelIo`, event failures, unexpected
+overlapped completion, worker-start failure, and worker-shutdown timeout as
+acquisition failures. The recovered error values include driver ring overflow
+(`1002`), wait timeout (`159`), and the expected Win32/ring specific errors.
+This is sufficient to define a managed acquisition lifecycle with explicit
+start, stop, flush, and timeout states; it is not yet sufficient to decode the
+contents that were flushed.

@@ -77,10 +77,20 @@ namespace PakonLib.Enums
         /// </summary>
         public static SaveControl FileHeader => FromName("SAV_FileHeader");
 
+        /// <summary>
+        /// Requests TLX's legacy fast 8-bit DIB delivery mode. This is a destination-format behavior,
+        /// not scanner acquisition or PakonImau color processing, and is not part of the replacement baseline.
+        /// </summary>
         public static SaveControl FastUpdate8BitDib => FromName("SAV_FastUpdate8BitDib");
 
+        /// <summary>
+        /// Requests top-down row ordering when TLX emits DIB-formatted client/shared-memory output.
+        /// </summary>
         public static SaveControl TopDownDib => FromName("SAV_TopDownDib");
 
+        /// <summary>
+        /// Prevents TLX from enlarging an image while fitting it to the requested output bounds.
+        /// </summary>
         public static SaveControl DoNotScaleUp => FromName("SAV_DoNotScaleUp");
 
         /// <summary>

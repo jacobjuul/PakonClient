@@ -27,8 +27,9 @@ namespace PakonLib.Enums
         public static ScanControl AggressiveFraming => FromName("SCAN_AggressiveFraming");
 
         /// <summary>
-        /// Requests the TLA scratch-removal processing path. Availability and the resulting correction
-        /// still depend on the native scan configuration.
+        /// Requests scratch-capable acquisition. TLA allocates an expanded capture/ring-buffer layout
+        /// when this bit is set, consistent with carrying the IR data needed by later scratch removal.
+        /// It does not itself apply correction; output also needs <see cref="SaveControl.UseScratchRemovalIfAvailable"/>.
         /// </summary>
         public static ScanControl UseScratchRemoval => FromName("SCAN_UseScratchRemoval");
 

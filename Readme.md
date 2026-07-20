@@ -1,3 +1,68 @@
+# PakonClient
+
+The active implementation is a new .NET 10, COM-free scanner project. Its
+first component, `Pakon.Transport`, communicates directly with the installed
+Pakon driver and intentionally exposes only documented, read-only metadata
+access until scanner packets have been recovered and validated.
+
+The previous TLX-based applications, COM interop wrapper, raw converter, and
+initial x86 transport probe are preserved unchanged under `src\Legacy`. They
+remain a valuable behavioural reference and test oracle; they are not the
+foundation of the new application.
+
+Build the active solution:
+
+```powershell
+dotnet build .\Pakon.sln
+dotnet run --project .\src\Pakon.Transport.Cli
+```
+
+The CLI probes known driver endpoints using only
+`IOCTL_EZUSB_GET_DRIVER_VERSION` (`0x222074`). It does not send scanner packet
+commands or initialize/move hardware.
+
+`Pakon.LegacyBridge` is the sole temporary exception: an x86 .NET 10 Windows
+process that contains all TLC/TLX COM usage. The .NET 10 app communicates with
+it using named pipes through `Pakon.LegacyBridge.Client`; it does not load COM
+types itself. The bridge preserves the direct-TLC activation/initialization
+probe for protocol research and also provides a persistent **TLX** session for
+the currently proven scan/save facade. Its scan, save, move, cancel, and
+close RPCs use behaviour-based names and scalar values, so TLX types never
+become the new application's public API.
+
+Start the bridge first, then initialize and poll the TLX session:
+
+```powershell
+dotnet run --project .\src\Pakon.LegacyBridge -- --pipe PakonLegacyBridge
+dotnet run --project .\src\Pakon.Transport.Cli -- --initialize-tlx-session
+dotnet run --project .\src\Pakon.Transport.Cli -- --tlx-session-status
+```
+
+The TLX session moves through `Initializing`, `Ready`, `Scanning`, `Saving`,
+`CancellingScan`, `CancellingSave`, `Faulted`, and `Closed`. Callback operation
+and status values are retained verbatim in session status for diagnosis.
+
+To produce a controlled reference trace, start the bridge, then run one
+controller command. It initializes, waits for TLX, prompts once before film
+motion, scans the fixed baseline profile, promotes the roll, saves JPEGs, and
+closes the session.
+
+```powershell
+dotnet run --project .\src\Pakon.Transport.Cli -- --run-tlx-trace C:\PakonTraces\roll-001
+```
+
+The trace contains a versioned `manifest.json`, append-only `events.jsonl`,
+metadata snapshots, and runtime evidence (the relevant 32-bit registry values
+and readable native logs). It records raw TLX callbacks and drains the native
+TLX error queue after a callback error. PFS cleanup is limited to buffers
+created or changed during the bridge's own session; existing unchanged buffers
+are left alone. The recorder observes the known facade only: it neither hooks
+the driver nor records/replays scanner packets or bulk pixels. The JPEG step
+uses original dimensions, recorded rotation, colour correction, scene balance,
+adjustments, bicubic scaling, quality 90, 300 DPI, and 24-bit output.
+
+## Legacy background
+
 _Intro_
 
 The Kodak Pakon has a SDK/API called TLX installed on the machine. This is a COM-server which contains all the low level functions needed for using a Pakon through software. At some point, there probably was some documentation distributed for using this as a client, and part of that documentation an example application came along, known as the TLXClientDemo. The UI is very bare bones because the Pakon developers just shoved exactly everything the COM-server was capable of doing in there, with a checkbox or radio button for every setting.
@@ -6,7 +71,7 @@ Windows COM is old and forgotten but was pretty cool for its age. It is actually
 
 Through a disassembler it is possible to reverse engineer the Pakon.dll and get some well needed clues as to how to work with a Pakon through software. And through the reverse engineering software [Ghidra](https://ghidra-sre.org/) it is possible to gain some insights into TLX.dll.
 
-_What we know_
+_Legacy findings_
 
 - TLA, TLB, TLC, TLX are COM DLL:s that TLXClientDemo interfaces with. Before TLXClientDemo there was a TLAClientDemo. There is a reference manual for TLA in the docs folder.
 - TLXClientDemo is a demonstration app that you can run the Pakon without using the official software.
@@ -15,9 +80,9 @@ _What we know_
 - The TLX COM server expects its native DLL folder and working directory to be set up correctly. The current console client does that automatically by locating the registered 32-bit `tlx.dll`, or by using `--com-server-dir`.
 - The application must run elevated. The console client checks for administrator privileges before opening a scanner session.
 
-_What this app can do now_
+_What the legacy client can do_
 
-This repo currently contains:
+`src\Legacy` contains:
 
 - `PakonLib`: a C# wrapper around the TLX COM interfaces and related Pakon scanner operations.
 - `ConsoleClient`: an x86 .NET Framework 4.8 command line client for operating the scanner.
@@ -45,7 +110,7 @@ The console client can now:
 
 This is still experimental scanner-control software. It is not yet a polished replacement for the official Pakon software, but it is now more than a proof of concept: it can operate the scanner, save images, and exercise a useful chunk of the TLX API from the command line.
 
-_Typical usage_
+_Legacy-client usage_
 
 Start interactive mode:
 
@@ -94,7 +159,7 @@ ConsoleClient.exe help scan-save
 ConsoleClient.exe help save
 ```
 
-_Important commands_
+_Legacy-client commands_
 
 - `init`: initialize TLX and keep the scanner session open in interactive mode.
 - `info`: print scanner model, serial, and hardware values.

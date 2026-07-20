@@ -1,0 +1,44 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Pakon.Transport", "src\Pakon.Transport\Pakon.Transport.csproj", "{70B53902-1E88-4BF4-A158-0DCE568AFC83}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Pakon.Transport.Cli", "src\Pakon.Transport.Cli\Pakon.Transport.Cli.csproj", "{D0FC601B-61CC-43D0-845C-D83E38B448B0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Pakon.LegacyBridge.Protocol", "src\Pakon.LegacyBridge.Protocol\Pakon.LegacyBridge.Protocol.csproj", "{CEDDB14F-F8B4-4D7C-B463-92A88F6CB578}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Pakon.LegacyBridge.Client", "src\Pakon.LegacyBridge.Client\Pakon.LegacyBridge.Client.csproj", "{4D52E5AE-5B7D-474F-BF83-A0DEAC31E0E0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Pakon.LegacyBridge", "src\Pakon.LegacyBridge\Pakon.LegacyBridge.csproj", "{0B624147-5DC0-4D58-B321-01198F4E1D48}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{70B53902-1E88-4BF4-A158-0DCE568AFC83}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{70B53902-1E88-4BF4-A158-0DCE568AFC83}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{70B53902-1E88-4BF4-A158-0DCE568AFC83}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{70B53902-1E88-4BF4-A158-0DCE568AFC83}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D0FC601B-61CC-43D0-845C-D83E38B448B0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D0FC601B-61CC-43D0-845C-D83E38B448B0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D0FC601B-61CC-43D0-845C-D83E38B448B0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D0FC601B-61CC-43D0-845C-D83E38B448B0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CEDDB14F-F8B4-4D7C-B463-92A88F6CB578}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CEDDB14F-F8B4-4D7C-B463-92A88F6CB578}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CEDDB14F-F8B4-4D7C-B463-92A88F6CB578}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CEDDB14F-F8B4-4D7C-B463-92A88F6CB578}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4D52E5AE-5B7D-474F-BF83-A0DEAC31E0E0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4D52E5AE-5B7D-474F-BF83-A0DEAC31E0E0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4D52E5AE-5B7D-474F-BF83-A0DEAC31E0E0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4D52E5AE-5B7D-474F-BF83-A0DEAC31E0E0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0B624147-5DC0-4D58-B321-01198F4E1D48}.Debug|Any CPU.ActiveCfg = Debug|x86
+		{0B624147-5DC0-4D58-B321-01198F4E1D48}.Debug|Any CPU.Build.0 = Debug|x86
+		{0B624147-5DC0-4D58-B321-01198F4E1D48}.Debug|x86.Build.0 = Debug|x86
+		{0B624147-5DC0-4D58-B321-01198F4E1D48}.Release|Any CPU.ActiveCfg = Release|x86
+		{0B624147-5DC0-4D58-B321-01198F4E1D48}.Release|Any CPU.Build.0 = Release|x86
+		{0B624147-5DC0-4D58-B321-01198F4E1D48}.Release|x86.Build.0 = Release|x86
+	EndGlobalSection
+EndGlobal

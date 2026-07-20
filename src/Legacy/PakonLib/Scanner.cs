@@ -140,6 +140,7 @@ namespace PakonLib
                 case WorkerThreadOperation.ScanProgress:
                 case WorkerThreadOperation.ImportFromFileProgress:
                 case WorkerThreadOperation.TlxProgress:
+                case WorkerThreadOperation.OrderAnalysisProgress:
                     if (TlxScanProgress != null)
                     {
                         TlxScanProgress(operation, status);

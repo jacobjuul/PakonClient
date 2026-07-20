@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <PlatformTarget>x86</PlatformTarget>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>Pakon.LegacyBridge</AssemblyName>
+    <PakonTlxInteropPath Condition="'$(PakonTlxInteropPath)' == ''">$(MSBuildProgramFiles32)\Pakon\F-X35 COM SERVER\Interop.TLXLib.dll</PakonTlxInteropPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Pakon.LegacyBridge.Protocol\Pakon.LegacyBridge.Protocol.csproj" />
+    <Reference Include="Interop.TLXLib">
+      <HintPath>$(PakonTlxInteropPath)</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

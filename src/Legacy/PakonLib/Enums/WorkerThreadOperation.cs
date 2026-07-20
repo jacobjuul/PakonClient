@@ -2,6 +2,9 @@ using TLXLib;
 
 namespace PakonLib
 {
+    // These are callback classifications from the shared TLX type library. They do not
+    // authorize the corresponding operation; in particular, all firmware-update paths
+    // remain permanently forbidden in this project.
     public enum WorkerThreadOperation
     {
         InitializeError = (int)WORKER_THREAD_OPERATION_000.WTO_InitializeError,
@@ -45,7 +48,10 @@ namespace PakonLib
         ScanProgress = (int)WORKER_THREAD_OPERATION_000.WTO_ScanProgress,
         ImportFromFileProgress = (int)WORKER_THREAD_OPERATION_000.WTO_ImportFromFileProgress,
         TlxProgress = (int)WORKER_THREAD_OPERATION_000.WTO_TLXProgress,
-        SaveProgress = (int)WORKER_THREAD_OPERATION_000.WTO_SaveProgress
+        SaveProgress = (int)WORKER_THREAD_OPERATION_000.WTO_SaveProgress,
+        // The installed TLX 1.1 type library declares this progress-only callback.
+        // The payload semantics are not yet traced, so retain the raw status value.
+        OrderAnalysisProgress = (int)WORKER_THREAD_OPERATION_000.WTO_OrderAnalysisProgress
     }
 
     internal static class WorkerThreadOperationExtensions
