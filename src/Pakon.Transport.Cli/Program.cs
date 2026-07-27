@@ -1,5 +1,6 @@
 using Pakon.Transport;
 using Pakon.LegacyBridge.Client;
+using System.Diagnostics;
 
 var endpoint = default(string);
 var readInterruptStatus = false;
@@ -16,6 +17,7 @@ var snapshotTlxTraceLabel = default(string);
 var scanTlxTraceProfile = false;
 var saveTlxTraceJpegs = false;
 var runTlxTraceDirectory = default(string);
+var captureFileIoEtw = false;
 int[]? scanRollValues = null;
 var moveOldestRollToSaveGroup = false;
 var comServerDirectory = default(string);
@@ -112,6 +114,12 @@ for (var index = 0; index < args.Length; index++)
         continue;
     }
 
+    if (args[index] == "--capture-fileio-etw")
+    {
+        captureFileIoEtw = true;
+        continue;
+    }
+
     if (args[index] == "--scan-roll" && index + 5 < args.Length)
     {
         scanRollValues = [int.Parse(args[++index]), int.Parse(args[++index]), int.Parse(args[++index]), int.Parse(args[++index]), int.Parse(args[++index])];
@@ -136,13 +144,19 @@ for (var index = 0; index < args.Length; index++)
         continue;
     }
 
-    Console.Error.WriteLine("Usage: Pakon.Transport.Cli [--run-tlx-trace <directory>] [--device <path>] [--read-ppb-interrupt-status] [--probe-legacy-bridge] [--initialize-legacy-tlc] [--legacy-tlc-status] [--close-legacy-tlc] [--initialize-tlx-session] [--tlx-session-status] [--close-tlx-session] [--begin-tlx-trace <directory>] [--snapshot-tlx-trace <label>] [--scan-tlx-trace-profile] [--save-tlx-trace-jpegs] [--end-tlx-trace] [--scan-roll <resolution> <filmColor> <filmFormat> <stripMode> <scanControl>] [--move-oldest-roll-to-save-group] [--com-server-dir <path>] [--pipe <name>]");
+    Console.Error.WriteLine("Usage: Pakon.Transport.Cli [--run-tlx-trace <directory> [--capture-fileio-etw]] [--device <path>] [--read-ppb-interrupt-status] [--probe-legacy-bridge] [--initialize-legacy-tlc] [--legacy-tlc-status] [--close-legacy-tlc] [--initialize-tlx-session] [--tlx-session-status] [--close-tlx-session] [--begin-tlx-trace <directory>] [--snapshot-tlx-trace <label>] [--scan-tlx-trace-profile] [--save-tlx-trace-jpegs] [--end-tlx-trace] [--scan-roll <resolution> <filmColor> <filmFormat> <stripMode> <scanControl>] [--move-oldest-roll-to-save-group] [--com-server-dir <path>] [--pipe <name>]");
     return 2;
 }
 
 if (runTlxTraceDirectory is not null)
 {
-    return await RunTlxTraceAsync(new LegacyBridgeClient(pipeName), runTlxTraceDirectory);
+    return await RunTlxTraceAsync(new LegacyBridgeClient(pipeName), runTlxTraceDirectory, captureFileIoEtw);
+}
+
+if (captureFileIoEtw)
+{
+    Console.Error.WriteLine("--capture-fileio-etw is only valid with --run-tlx-trace.");
+    return 2;
 }
 
 if (probeLegacyBridge)
@@ -261,13 +275,21 @@ foreach (var candidate in endpoints)
 
 return anySuccess ? 0 : 1;
 
-static async Task<int> RunTlxTraceAsync(LegacyBridgeClient client, string directory)
+static async Task<int> RunTlxTraceAsync(LegacyBridgeClient client, string directory, bool captureFileIoEtw)
 {
     var traceOpen = false;
     var sessionOpen = false;
+    var etwStarted = false;
+    var etwPath = Path.Combine(Path.GetFullPath(directory), "native-fileio.etl");
     try
     {
         Console.WriteLine("Starting one-command TLX reference trace: {0}", Path.GetFullPath(directory));
+        if (captureFileIoEtw)
+        {
+            StartWprFileIoCapture();
+            etwStarted = true;
+            Console.WriteLine("Windows ETW light FileIO capture enabled. It records PFS/file timing, not IOCTL payload bytes.");
+        }
         PrintResponse("begin trace", await client.BeginTlxTraceAsync(directory));
         traceOpen = true;
 
@@ -310,7 +332,31 @@ static async Task<int> RunTlxTraceAsync(LegacyBridgeClient client, string direct
         {
             try { PrintResponse("finish trace", await client.EndTlxTraceAsync()); } catch (Exception exception) { Console.Error.WriteLine("Could not finish trace: " + exception.Message); }
         }
+        if (etwStarted)
+        {
+            try { StopWprCapture(etwPath); Console.WriteLine("ETW capture written to: {0}", etwPath); } catch (Exception exception) { Console.Error.WriteLine("Could not stop ETW capture: " + exception.Message); }
+        }
     }
+}
+
+static void StartWprFileIoCapture()
+{
+    // The verbose FileIO+CPU combination generated a multi-gigabyte trace and dropped events
+    // during a six-frame reference scan. The light FileIO profile is sufficient for PFS timing.
+    RunWpr("-start FileIO.light -filemode");
+}
+
+static void StopWprCapture(string path)
+{
+    RunWpr("-stop \"" + path + "\"");
+}
+
+static void RunWpr(string arguments)
+{
+    using var process = Process.Start(new ProcessStartInfo("wpr.exe", arguments) { UseShellExecute = false });
+    if (process is null) throw new InvalidOperationException("Could not start wpr.exe.");
+    process.WaitForExit();
+    if (process.ExitCode != 0) throw new InvalidOperationException("wpr.exe exited with code " + process.ExitCode + ". Run the controller elevated.");
 }
 
 static async Task WaitForReadyAsync(LegacyBridgeClient client, string phase)
@@ -322,8 +368,9 @@ static async Task WaitForReadyAsync(LegacyBridgeClient client, string phase)
         if (!response.Succeeded) throw new InvalidOperationException(response.Error ?? "TLX status request failed.");
         string? state;
         response.Values.TryGetValue("state", out state);
-        Console.WriteLine("  {0}: state={1}; callbacks={2}; last=({3}, {4})", phase, state ?? "unknown",
-            GetValue(response, "callbackCount"), GetValue(response, "lastOperation"), GetValue(response, "lastStatus"));
+        Console.WriteLine("  {0}: state={1}; callbacks={2}; last=({3}, {4}) {5}: {6}", phase, state ?? "unknown",
+            GetValue(response, "callbackCount"), GetValue(response, "lastOperation"), GetValue(response, "lastStatus"),
+            GetValue(response, "lastOperationName"), GetValue(response, "lastStatusMeaning"));
         if (string.Equals(state, "Ready", StringComparison.Ordinal)) return;
         if (string.Equals(state, "Faulted", StringComparison.Ordinal) || string.Equals(state, "Closed", StringComparison.Ordinal))
         {

@@ -25,8 +25,14 @@ namespace Pakon.LegacyBridge
         private TlxProgressCallback callback;
         private int callbackCookie;
         private string state = "Closed";
+        private string failure;
         private TlxTraceRecorder trace;
         private Dictionary<string, PfsBufferState> pfsBuffersAtOpen;
+        private IntPtr rawBufferPointer1;
+        private IntPtr rawBufferPointer2;
+        private int rawBufferSize;
+        private bool rawBufferOneIsNext = true;
+        private string pendingRawOutputPath;
 
         public IDictionary<string, string> BeginTrace(IDictionary<string, string> arguments)
         {
@@ -112,9 +118,19 @@ namespace Pakon.LegacyBridge
                     }
                     finally { Monitor.Enter(sync); }
                 }
-                catch
+                catch (Exception exception)
                 {
+                    // EC_PreviousError (25) is a stack marker, not the underlying cause.
+                    // Drain the native queue while the COM object is still alive so the
+                    // controller receives the actionable initialization error.
+                    var nativeErrors = DrainInitializationErrors(GetComErrorValue(exception));
                     CloseCore();
+                    if (!string.IsNullOrWhiteSpace(nativeErrors))
+                    {
+                        throw new InvalidOperationException(
+                            "TLX initialization failed. Native error stack: " + nativeErrors,
+                            exception);
+                    }
                     throw;
                 }
 
@@ -128,6 +144,7 @@ namespace Pakon.LegacyBridge
             {
                 if (state != "Closed" || instance != null) throw new InvalidOperationException("A TLX session is already opening or open.");
                 state = "InitializationQueued";
+                failure = null;
                 Trace("initialize-queued", new Dictionary<string, string>(arguments));
                 return GetStatusCore();
             }
@@ -138,6 +155,7 @@ namespace Pakon.LegacyBridge
             lock (sync)
             {
                 state = "Faulted";
+                failure = exception.GetType().Name + ": " + exception.Message;
                 Log("asynchronous TLX failure: " + exception.GetType().Name + ": " + exception.Message);
                 Trace("asynchronous-failure", new Dictionary<string, string> { { "exception", exception.GetType().FullName + ": " + exception.Message } });
             }
@@ -149,12 +167,31 @@ namespace Pakon.LegacyBridge
             {
                 RequireReady();
                 state = "Scanning";
-                Log("starting scan");
+                Log(
+                    "starting scan: resolution=" + GetRequiredInt32(arguments, "resolution").ToString(CultureInfo.InvariantCulture) +
+                    ", filmColor=" + GetRequiredInt32(arguments, "filmColor").ToString(CultureInfo.InvariantCulture) +
+                    ", filmFormat=" + GetRequiredInt32(arguments, "filmFormat").ToString(CultureInfo.InvariantCulture) +
+                    ", stripMode=" + GetRequiredInt32(arguments, "stripMode").ToString(CultureInfo.InvariantCulture) +
+                    ", scanControl=0x" + unchecked((uint)GetRequiredInt32(arguments, "scanControl")).ToString("X8", CultureInfo.InvariantCulture));
                 Trace("scan-requested", new Dictionary<string, string>(arguments));
-                instance.ScanPictures(
-                    GetRequiredInt32(arguments, "resolution"), GetRequiredInt32(arguments, "filmColor"),
-                    GetRequiredInt32(arguments, "filmFormat"), GetRequiredInt32(arguments, "stripMode"),
-                    GetRequiredInt32(arguments, "scanControl"), "1000");
+                try
+                {
+                    instance.ScanPictures(
+                        GetRequiredInt32(arguments, "resolution"), GetRequiredInt32(arguments, "filmColor"),
+                        GetRequiredInt32(arguments, "filmFormat"), GetRequiredInt32(arguments, "stripMode"),
+                        GetRequiredInt32(arguments, "scanControl"), "1000");
+                }
+                catch (Exception exception)
+                {
+                    var nativeErrors = DrainLastErrors(35, GetComErrorValue(exception));
+                    state = "Ready";
+                    throw new InvalidOperationException(
+                        "TLX rejected the scan request (COM " +
+                        GetComErrorValue(exception).ToString(CultureInfo.InvariantCulture) +
+                        DescribeErrorCode(GetComErrorValue(exception)) + ")." +
+                        (string.IsNullOrWhiteSpace(nativeErrors) ? string.Empty : " Native error stack: " + nativeErrors),
+                        exception);
+                }
                 var result = GetStatusCore(); Trace("scan-accepted", result); return result;
             }
         }
@@ -255,6 +292,111 @@ namespace Pakon.LegacyBridge
             }
         }
 
+        public IDictionary<string, string> GetFrames()
+        {
+            lock (sync)
+            {
+                RequireReady();
+                int rolls = 0, strips = 0, count = 0, selected = 0, hidden = 0;
+                instance.GetPictureCountSaveGroup(ref rolls, ref strips, ref count, ref selected, ref hidden);
+                var result = new Dictionary<string, string>
+                {
+                    { "count", count.ToString(CultureInfo.InvariantCulture) }
+                };
+                for (var index = 0; index < count; index++)
+                {
+                    int roll, strip, product, specifier, frameNumber, aspect, rotation, selection;
+                    string frameName, fileName, directory;
+                    instance.GetPictureInfo3(index, out roll, out strip, out product, out specifier, out frameName, out frameNumber, out aspect, out fileName, out directory, out rotation, out selection);
+                    var key = "frame." + index.ToString(CultureInfo.InvariantCulture) + ".";
+                    result[key + "frameName"] = frameName ?? string.Empty;
+                    result[key + "frameNumber"] = frameNumber.ToString(CultureInfo.InvariantCulture);
+                    result[key + "filmProduct"] = product.ToString(CultureInfo.InvariantCulture);
+                    result[key + "filmSpecifier"] = specifier.ToString(CultureInfo.InvariantCulture);
+                    result[key + "rotation"] = rotation.ToString(CultureInfo.InvariantCulture);
+                    result[key + "selection"] = selection.ToString(CultureInfo.InvariantCulture);
+                }
+                return result;
+            }
+        }
+
+        public IDictionary<string, string> UpdateFrame(IDictionary<string, string> arguments)
+        {
+            lock (sync)
+            {
+                RequireReady();
+                var index = GetRequiredInt32(arguments, "index");
+                int roll, strip, product, specifier, frameNumber, aspect, oldRotation, oldSelection;
+                string frameName, oldFileName, oldDirectory;
+                instance.GetPictureInfo3(index, out roll, out strip, out product, out specifier, out frameName, out frameNumber, out aspect, out oldFileName, out oldDirectory, out oldRotation, out oldSelection);
+                var fileName = GetString(arguments, "fileName");
+                var directory = GetString(arguments, "directory");
+                var rotation = GetInt32(arguments, "rotation", oldRotation);
+                bool selected;
+                if (!bool.TryParse(GetString(arguments, "selected"), out selected)) selected = oldSelection != 0;
+                instance.PutPictureInfo(index, frameNumber, string.IsNullOrWhiteSpace(fileName) ? oldFileName : fileName, string.IsNullOrWhiteSpace(directory) ? oldDirectory : directory, rotation, selected ? 1 : 0);
+                return new Dictionary<string, string> { { "index", index.ToString(CultureInfo.InvariantCulture) } };
+            }
+        }
+
+        public IDictionary<string, string> RenderFrameToDisk(IDictionary<string, string> arguments)
+        {
+            lock (sync)
+            {
+                RequireReady();
+                var index = GetRequiredInt32(arguments, "index");
+                var requestedPath = Path.GetFullPath(GetString(arguments, "outputPath"));
+                var directory = Path.GetDirectoryName(requestedPath);
+                if (string.IsNullOrWhiteSpace(directory)) throw new ArgumentException("Bridge argument 'outputPath' must include a directory.");
+                Directory.CreateDirectory(directory);
+                int roll, strip, product, specifier, frameNumber, aspect, rotation, selection;
+                string frameName, oldFileName, oldDirectory;
+                instance.GetPictureInfo3(index, out roll, out strip, out product, out specifier, out frameName, out frameNumber, out aspect, out oldFileName, out oldDirectory, out rotation, out selection);
+                var stem = Path.GetFileNameWithoutExtension(requestedPath);
+                instance.PutPictureInfo(index, frameNumber, stem, directory, rotation, selection);
+                state = "Saving";
+                instance.SaveToDisk(index, null, GetRequiredInt32(arguments, "saveControl"),
+                    GetInt32(arguments, "width", 0), GetInt32(arguments, "height", 0), 0, 0, 0,
+                    GetInt32(arguments, "quality", 95), 300, 24);
+                return new Dictionary<string, string>
+                {
+                    { "outputPath", Path.Combine(directory, stem + ".jpg") },
+                    { "index", index.ToString(CultureInfo.InvariantCulture) }
+                };
+            }
+        }
+
+        public IDictionary<string, string> RenderFrameToRaw(IDictionary<string, string> arguments)
+        {
+            lock (sync)
+            {
+                RequireReady();
+                var index = GetRequiredInt32(arguments, "index");
+                var outputPath = Path.GetFullPath(GetString(arguments, "outputPath"));
+                var directory = Path.GetDirectoryName(outputPath);
+                if (string.IsNullOrWhiteSpace(directory)) throw new ArgumentException("Bridge argument 'outputPath' must include a directory.");
+                Directory.CreateDirectory(directory);
+
+                int left = 0, top = 0, right = 0, bottom = 0;
+                instance.GetPictureFramingUserInfo(index, ref left, ref top, ref right, ref bottom);
+                var width = right + 1 - left;
+                var height = bottom + 1 - top;
+                if (width <= 0 || height <= 0) throw new InvalidOperationException("Frame has invalid dimensions " + width + "x" + height + ".");
+                AllocateRawBuffers(checked(16 + width * height * 6));
+                pendingRawOutputPath = outputPath;
+                RegisterNextRawBuffer();
+                RegisterNextRawBuffer();
+                state = "Saving";
+                var saveControl = GetRequiredInt32(arguments, "saveControl") | 0x00000400;
+                instance.SaveToClientMemory(index, saveControl, width, height, 0, 0, (int)FILE_FORMAT_SAVE_TO_MEMORY_000.iFILE_FORMAT_SAVE_TO_MEMORY_PLANAR_16, 1);
+                return new Dictionary<string, string>
+                {
+                    { "outputPath", outputPath }, { "width", width.ToString(CultureInfo.InvariantCulture) },
+                    { "height", height.ToString(CultureInfo.InvariantCulture) }
+                };
+            }
+        }
+
         public IDictionary<string, string> CancelScan()
         {
             lock (sync) { RequireOpen(); Log("cancelling scan"); instance.ScanCancel(); state = "CancellingScan"; var result = GetStatusCore(); Trace("scan-cancel-requested", result); return result; }
@@ -298,8 +440,11 @@ namespace Pakon.LegacyBridge
                 result["callbackCount"] = callback.Count.ToString(CultureInfo.InvariantCulture);
                 result["lastOperation"] = callback.LastOperation.ToString(CultureInfo.InvariantCulture);
                 result["lastStatus"] = callback.LastStatus.ToString(CultureInfo.InvariantCulture);
+                result["lastOperationName"] = TlxCallbackDecoder.OperationName(callback.LastOperation);
+                result["lastStatusMeaning"] = TlxCallbackDecoder.StatusMeaning(callback.LastOperation, callback.LastStatus);
             }
             if (trace != null) result["traceDirectory"] = trace.DirectoryPath;
+            if (!string.IsNullOrWhiteSpace(failure)) result["failure"] = failure;
             return result;
         }
 
@@ -310,13 +455,33 @@ namespace Pakon.LegacyBridge
                 // The installed TLX 1.1 type library uses 3000 for WTP_ProgressComplete.
                 if (IsErrorOperation(operation)) state = "Faulted";
                 else if (status == 3000 && state != "Closed") state = "Ready";
-                Log("callback operation=" + operation.ToString(CultureInfo.InvariantCulture) + "; status=" + status.ToString(CultureInfo.InvariantCulture) + "; state=" + state);
+                var operationName = TlxCallbackDecoder.OperationName(operation);
+                var statusMeaning = TlxCallbackDecoder.StatusMeaning(operation, status);
+                Log("callback operation=" + operation.ToString(CultureInfo.InvariantCulture) + " (" + operationName + "); status=" + status.ToString(CultureInfo.InvariantCulture) + " (" + statusMeaning + "); state=" + state);
                 Trace("callback", new Dictionary<string, string>
                 {
                     { "operation", operation.ToString(CultureInfo.InvariantCulture) },
-                    { "status", status.ToString(CultureInfo.InvariantCulture) }
+                    { "operationName", operationName }, { "status", status.ToString(CultureInfo.InvariantCulture) },
+                    { "statusHex", "0x" + unchecked((uint)status).ToString("X8", CultureInfo.InvariantCulture) }, { "statusMeaning", statusMeaning }
                 });
-                if (IsErrorOperation(operation)) DrainLastErrors(operation, status);
+                if (operation == 38 && pendingRawOutputPath != null)
+                {
+                    if (status == 3000)
+                    {
+                        ReleaseRawBuffers();
+                    }
+                    else if (status != 0 && status != 1000 && status != 2000)
+                    {
+                        WriteCompletedRawBuffer();
+                        RegisterNextRawBuffer();
+                    }
+                }
+                if (IsErrorOperation(operation))
+                {
+                    ReleaseRawBuffers();
+                    var nativeErrors = DrainLastErrors(operation, status);
+                    if (!string.IsNullOrWhiteSpace(nativeErrors)) failure = nativeErrors;
+                }
                 if (operation == 38 && status == 3000 && trace != null) trace.CaptureOutputEvidence();
             }
         }
@@ -326,9 +491,34 @@ namespace Pakon.LegacyBridge
             return operation == 1 || operation == 13 || operation == 15 || operation == 35 || operation == 39 || operation == 41;
         }
 
-        private void DrainLastErrors(int callbackOperation, int callbackStatus)
+        private string DrainLastErrors(int callbackOperation, int callbackStatus)
         {
-            if (instance == null) return;
+            if (instance == null) return string.Empty;
+            return DrainErrorQueue(GetErrorInterface(callbackOperation), callbackOperation, callbackStatus, false);
+        }
+
+        private string DrainInitializationErrors(int callbackStatus)
+        {
+            if (instance == null) return string.Empty;
+            var errors = new List<string>();
+            var interfaces = new[]
+            {
+                (int)INT_IID_000.INT_IID_ITLAMain,
+                (int)INT_IID_000.INT_IID_ITLXMain,
+                (int)INT_IID_000.INT_IID_IScanPictures,
+                (int)INT_IID_000.INT_IID_ISavePictures
+            };
+            foreach (var interfaceId in interfaces)
+            {
+                var current = DrainErrorQueue(interfaceId, 1, callbackStatus, false);
+                if (!string.IsNullOrWhiteSpace(current)) errors.Add(current);
+            }
+            return string.Join(" | ", errors.ToArray());
+        }
+
+        private string DrainErrorQueue(int interfaceId, int callbackOperation, int callbackStatus, bool startupCleanup)
+        {
+            var errors = new List<string>();
             for (var attempt = 0; attempt < 16; attempt++)
             {
                 try
@@ -336,25 +526,77 @@ namespace Pakon.LegacyBridge
                     var message = string.Empty;
                     var number = string.Empty;
                     var detail = string.Empty;
-                    var result = instance.GetAndClearLastError((int)INT_IID_000.INT_IID_ITLAMain, ref message, ref number);
+                    var result = instance.GetAndClearLastError(interfaceId, ref message, ref number);
                     var values = new Dictionary<string, string>
                     {
+                        { "interfaceId", interfaceId.ToString(CultureInfo.InvariantCulture) },
                         { "callbackOperation", callbackOperation.ToString(CultureInfo.InvariantCulture) },
                         { "callbackStatus", callbackStatus.ToString(CultureInfo.InvariantCulture) },
                         { "attempt", attempt.ToString(CultureInfo.InvariantCulture) },
                         { "returnCode", result.ToString(CultureInfo.InvariantCulture) },
                         { "message", message ?? string.Empty }, { "number", number ?? string.Empty }, { "detail", detail ?? string.Empty }
                     };
-                    Log("native error: " + values["message"] + "; number=" + values["number"] + "; detail=" + values["detail"]);
+                    Log((startupCleanup ? "cleared startup error" : "native error") +
+                        ": interface=" + interfaceId.ToString(CultureInfo.InvariantCulture) +
+                        "; return=" + result.ToString(CultureInfo.InvariantCulture) +
+                        "; message=" + values["message"] + "; number=" + values["number"]);
                     Trace("native-error", values);
+                    if (!startupCleanup && (result != 0 || !string.IsNullOrWhiteSpace(message) || !string.IsNullOrWhiteSpace(number)))
+                    {
+                        errors.Add(
+                            "interface=" + interfaceId.ToString(CultureInfo.InvariantCulture) +
+                            ", return=" + result.ToString(CultureInfo.InvariantCulture) +
+                            DescribeErrorCode(result) +
+                            (string.IsNullOrWhiteSpace(message) ? string.Empty : ", message=" + message) +
+                            (string.IsNullOrWhiteSpace(number) ? string.Empty : ", number=" + number));
+                    }
                     if (result != 25) break; // EC_PreviousError signals a queued error behind this one.
                 }
                 catch (Exception exception)
                 {
                     Trace("native-error-drain-failed", new Dictionary<string, string> { { "exception", exception.GetType().FullName + ": " + exception.Message } });
+                    var errorValue = GetComErrorValue(exception);
+                    Log((startupCleanup ? "startup error cleanup" : "native error queue") +
+                        ": interface=" + interfaceId.ToString(CultureInfo.InvariantCulture) +
+                        "; COM return=" + errorValue.ToString(CultureInfo.InvariantCulture) +
+                        DescribeErrorCode(errorValue));
+                    if (!startupCleanup)
+                    {
+                        errors.Add(
+                            "interface=" + interfaceId.ToString(CultureInfo.InvariantCulture) +
+                            ", COM return=" + errorValue.ToString(CultureInfo.InvariantCulture) +
+                            DescribeErrorCode(errorValue));
+                    }
                     break;
                 }
             }
+            return string.Join(" | ", errors.ToArray());
+        }
+
+        private static int GetErrorInterface(int operation)
+        {
+            if (operation == 35) return (int)INT_IID_000.INT_IID_IScanPictures;
+            if (operation == 39) return (int)INT_IID_000.INT_IID_ISavePictures;
+            if (operation == 41) return (int)INT_IID_000.INT_IID_ITLXMain;
+            return (int)INT_IID_000.INT_IID_ITLAMain;
+        }
+
+        private static string DescribeErrorCode(int value)
+        {
+            if (value == 0) return " (no error)";
+            if (value == 10) return " (scanner not initialized)";
+            if (value == 15) return " (invalid parameter)";
+            if (value == 25) return " (previous error queued)";
+            return string.Empty;
+        }
+
+        private static int GetComErrorValue(Exception exception)
+        {
+            var comException = exception as COMException;
+            int value;
+            if (int.TryParse(exception.Message == null ? string.Empty : exception.Message.Trim().Trim('\'', '"'), NumberStyles.Integer, CultureInfo.InvariantCulture, out value))
+                return value;
+            return comException == null ? 0 : comException.ErrorCode;
         }
 
         private IDictionary<string, string> SnapshotMetadata(string label)
@@ -407,7 +649,60 @@ namespace Pakon.LegacyBridge
             callbackCookie = 0; callback = null;
             if (instance != null && Marshal.IsComObject(instance)) Marshal.FinalReleaseComObject(instance);
             instance = null; state = "Closed";
+            ReleaseRawBuffers();
             CleanupOwnedPfsBuffers();
+        }
+
+        private void AllocateRawBuffers(int byteCount)
+        {
+            ReleaseRawBuffers();
+            rawBufferSize = byteCount;
+            rawBufferPointer1 = Marshal.AllocHGlobal(byteCount);
+            rawBufferPointer2 = Marshal.AllocHGlobal(byteCount);
+            rawBufferOneIsNext = true;
+        }
+
+        private void RegisterNextRawBuffer()
+        {
+            var pointer = rawBufferOneIsNext ? rawBufferPointer1 : rawBufferPointer2;
+            if (pointer == IntPtr.Zero) return;
+            // Only the header must be cleared before TLX owns the buffer. Clearing an entire
+            // Base16 frame here would briefly duplicate tens of megabytes in the x86 process.
+            Marshal.Copy(new byte[16], 0, pointer, 16);
+            instance.ClientMemoryBufferAdd(checked(pointer.ToInt32()), rawBufferSize);
+            rawBufferOneIsNext = !rawBufferOneIsNext;
+        }
+
+        private void WriteCompletedRawBuffer()
+        {
+            var pointer = rawBufferOneIsNext ? rawBufferPointer1 : rawBufferPointer2;
+            if (pointer == IntPtr.Zero || string.IsNullOrWhiteSpace(pendingRawOutputPath)) return;
+            var header = new byte[16];
+            Marshal.Copy(pointer, header, 0, header.Length);
+            var headerSize = BitConverter.ToUInt32(header, 0);
+            var width = BitConverter.ToUInt32(header, 4);
+            var height = BitConverter.ToUInt32(header, 8);
+            var bitCount = BitConverter.ToUInt32(header, 12);
+            var byteCount = checked((int)(headerSize + (ulong)width * height * (bitCount / 8u)));
+            if (headerSize < 16 || width == 0 || height == 0 || bitCount != 48 || byteCount > rawBufferSize)
+                throw new InvalidOperationException("TLX returned an invalid planar 16-bit buffer.");
+            var bytes = new byte[byteCount];
+            Marshal.Copy(pointer, bytes, 0, byteCount);
+            File.WriteAllBytes(pendingRawOutputPath, bytes);
+        }
+
+        private void ReleaseRawBuffers()
+        {
+            if (instance != null)
+            {
+                try { instance.ClientMemoryBufferDismissAll(); } catch { }
+            }
+            if (rawBufferPointer1 != IntPtr.Zero) Marshal.FreeHGlobal(rawBufferPointer1);
+            if (rawBufferPointer2 != IntPtr.Zero) Marshal.FreeHGlobal(rawBufferPointer2);
+            rawBufferPointer1 = IntPtr.Zero;
+            rawBufferPointer2 = IntPtr.Zero;
+            rawBufferSize = 0;
+            pendingRawOutputPath = null;
         }
 
         private void CleanupOwnedPfsBuffers()

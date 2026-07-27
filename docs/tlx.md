@@ -1,100 +1,67 @@
-# TLX migration and implementation guide
+# TLX and the Pakon scanner software
 
-This is the practical guide for replacing TLX/COM with a clear .NET 10
-application. It records architecture decisions, supported semantics, safe
-implementation boundaries, and the active migration plan. It deliberately
-links to the evidence ledger rather than repeating function-address detail.
+## Start here
 
-## Reading guide
+This document is the high-level reference for the installed Pakon software
+stack. It explains what TLX is, how the F-135 Plus path is assembled, what the
+public facade exposes, and which behaviour is established versus unknown.
 
-| Need | Start here |
+A reader who needs native evidence—COM identifiers, binary offsets, packet
+shapes, driver calls, or buffer layouts—should use
+[tlx-lowlevel.md](tlx-lowlevel.md). The image-processing pipeline is explained
+in [tlx-colour.md](tlx-colour.md). The implementation inventory and
+static-analysis order are retained separately in
+[research-notes.md](research-notes.md).
+
+## What is TLX?
+
+**TLX** is the 32-bit Windows COM interface installed with Pakon scanner
+software. Client software calls operations such as `InitializeScanner`,
+`ScanPictures`, and `SaveToDisk`; TLX selects a native backend and returns
+asynchronous progress through callbacks.
+
+TLX is not the scanner driver and does not define the USB protocol. It is a
+user-mode orchestration layer that combines scanner control, acquisition,
+temporary storage, framing, colour processing, and image delivery.
+
+```text
+application
+  -> TLX COM facade (tlx.dll)
+    -> model-specific implementation (TLA, TLB, or TLC)
+      -> Pakon Windows driver
+        -> scanner hardware
+
+after acquisition: PFS staging -> framing -> PakonImau/Ansel -> file or memory output
+```
+
+## Scope and backend selection
+
+This repository currently documents an F-135 Plus. The recovered F-135 facade
+path probes `\\.\Pakon135` and creates **TLA**. TLB and TLC are parallel
+native implementations; their similar names, strings, or packet routines do
+not make them steps in the observed F-135 path.
+
+The installed components have these roles:
+
+| Component | Role |
 | --- | --- |
-| Build the replacement architecture or choose the next implementation seam | This file: **Replacement inventory**, **scan controls**, **FX35 driver findings**, and **Target architecture**. |
-| Work on colour, LUTs, Ansel, DX rules, or offline image processing | [tlx-colour.md](tlx-colour.md). |
-| Verify a packet, COM ABI, native offset, registry path, or recovered function | [tlx-lowlevel.md](tlx-lowlevel.md). |
-| Understand the original raw research narrative | The retained historical sections in this file; they are cross-referenced rather than deleted. |
+| `tlx.dll` | Public COM facade and backend selector. |
+| `TLA.dll` | Observed F-135 backend: acquisition, PFS staging, framing, rendering, and PakonImau hosting. |
+| `TLB.dll`, `TLC.dll` | Related backend implementations used as explicitly labelled comparative evidence. |
+| `PakonImau.dll` | Native correction, scene-balance, and adjustment library. |
+| FX35 driver | Windows driver that exposes scanner endpoints and transports control/bulk data. |
 
-## Documentation ownership
+## How to read the evidence
 
-- **This file:** implementation choices and current conclusions.
-- **`tlx-colour.md`:** colour pipeline, asset selection, Ansel, and future in-house colour port.
-- **`tlx-lowlevel.md`:** static-analysis evidence, native ABI, packet bytes, and offsets.
+- **Confirmed** means directly observed in installed binaries, type libraries,
+  driver source, or controlled hardware behaviour.
+- **Inferred** means strongly indicated by code or call order, but not yet
+  validated as complete behaviour.
+- **Unknown** means there is insufficient basis for implementation.
 
-The detailed colour sections below are retained as historical source material;
-new colour work should be added to `tlx-colour.md` and low-level evidence to
-`tlx-lowlevel.md`.
-
-## Goal
-
-Replace the legacy TLX COM server incrementally with code in PakonClient while
-continuing to use the FX35 Windows driver.  The replacement needs to cover the
-user-mode COM/server and scanner-protocol layers; it does **not** initially
-need to replace the kernel driver.
-
-## Components found
-
-| Component | Location | Role currently understood |
-| --- | --- | --- |
-| .NET COM interop wrapper | `src/PakonLib/obj/Debug/Interop.TLXLib.dll` | Generated .NET declarations for the TLX COM API.  This contains signatures and enum values, not the scanner implementation. |
-| TLX COM server | `C:\Program Files (x86)\Pakon\F-X35 COM SERVER\tlx.dll` | Native 32-bit COM entry point and orchestration layer. |
-| TLX implementation modules | `TLA.dll`, `TLB.dll`, `TLC.dll` in the same directory | Three parallel native COM component implementations, each containing a full scanner/save pipeline. `tlx.dll` selects TLB for `\\.\Pakon135` and TLC for `\\.\PakonX35`; TLA is the loopback/simulator-oriented implementation. |
-| Image-processing library | `PakonImau.dll` in the same directory | Dynamically loaded by the implementation modules for image-processing and correction stages. |
-| Other supporting libraries | `AIDToolkit.dll`, `DMLDICELib.dll` | Supporting image/metadata libraries. |
-| FX35 driver | `C:\Code\FX35` | Source is available.  It loads scanner firmware and exposes the scanner transport to user-mode code. |
-
-The installed COM-server folder contains `tlx.dll` (294,912 bytes), `TLA.dll`,
-`TLB.dll`, `TLC.dll`, `PakonImau.dll`, and the other libraries above.
-
-## Replacement inventory and static-analysis plan
-
-This is the authoritative work queue for the COM-removal project.  It prevents
-us from extending the new application based on a method name alone.  A row is
-ready to implement only when its **static-analysis exit** column is met; until
-then, a bridge/probe may expose it only as a deliberately raw diagnostic.
-
-| Capability | Current owner and call path | Driver / hardware involvement | What is established | Static-analysis exit | Replacement priority |
-| --- | --- | --- | --- | --- | --- |
-| Backend selection | `tlx.dll` probes a device then creates TLB/TLC | Opens then closes device only | `Pakon135 -> TLB`, `PakonX35 -> TLC`; TLA is loopback-oriented | Record any remaining selection/config fallback; do not reproduce COM selection logic | High — replace with explicit managed endpoint selection |
-| COM API and callbacks | TLX facade or direct TLC `ITLAMain`/`ILongOpsCB` | None by itself | Direct TLC interfaces and callback ABI are recovered; direct TLC initialization has three arguments | Map public TLX methods to their direct backend interface/method for every capability below | High — bridge only during migration |
-| Initialization | TLC `ITLAMain.InitializeScanner(flags, timeout, sharedMemoryBytes)` creates an async initialization worker | Opens/configures scanner and may load configuration/native modules | Signature, callback registration, and legacy defaults are known | Identify the worker-state layout; map every initialization flag and each configuration/driver stage | High — must be understood before replacing acquisition |
-| Read-only status | TLC packet wrapper -> driver packet `03 01 10` | Yes, read-only `IOCTL 0x222090` | Exact request/response shape validated against `\\.\Pakon135` | Recover the complete status-bit meanings and polling-state transitions | High — first safe managed transport seam |
-| Driver transport / packet codec | TLB/TLC packet wrapper over `IOCTL_PAKON_SEND_AND_RECEIVE_PACKET` | Yes | IOCTL number, 36-byte response convention, packet framing, timeout behavior, and one read-only command are known | Catalogue packet classes, checksum/trailer rule, retries, and error/status decoding from DLL + driver source | Highest — foundation for a COM-free scanner path |
-| Raw acquisition and staging | Backend scanner workers -> overlapped reads -> PFS/CiBuffer staging | Yes — scan start, driver ring, motor/lamp/CCD control | Driver source exists; TLA/TLC have matching worker architecture; PFS is host-side staging | Recover scan-start packet sequence, ring ownership/lifetime, cancellation, and end-of-stream detection | Highest — enables in-house capture |
-| Framing | Backend scan worker -> host framing coordinator | No direct driver flag for known aggressive framing choice | `AggressiveFraming` is confirmed as blind placement; normal path is content detection | Map remaining framing inputs, image-coordinate conventions, and strip/frame metadata output | High — replacement can be pure managed code after capture |
-| Scan options | `ScanPictures` control mask reaches backend worker/config state | Mixed; most known bits are host state, sensor impact not yet proven | All public enum bits are listed; aggressive framing is understood; other paths partly identified | For each flag, locate its first read, all downstream branches, and any emitted packet/config field | High — no public managed option without this evidence |
-| Save-group and metadata | Backend owns acquired-roll / save-group records | No, after acquisition | Count/move/delete and picture/strip metadata COM contracts are known | Recover record layout, lifecycle, and minimum metadata needed by rendering | Medium — straightforward managed domain model later |
-| Rendering and destinations | Backend save worker -> disk, client memory, or shared memory | No, after acquisition | Destination meanings, worker split, and save-flag prerequisites are known | Map input planar format, per-picture state, and output layout/ownership | Medium — can first retain bridge/native implementation |
-| Colour correction and LUTs | TLA/TLC dynamic PakonImau host -> PakonImau + `Config\\ColorCorrection` | No | Host-side only; LUT/config directories and major entry points are recovered | Reconstruct host context, config selection, LUT/matrix load order, and planar ABI | Medium — native bridge first, managed port later |
-| Ansel scene balance | PakonImau roll/scene lifecycle after correction | No | Roll lifecycle, paths, diagnostics, partial descriptor, and renderer invocation are known | Recover complete descriptor/context ownership and validate deterministic offline fixtures | Medium — separate offline colour-science workstream |
-| Encoding/output files | Backend save worker / legacy converter | No | Existing converter establishes usable planar fixture format | Map legacy encoder options only where compatibility matters | Low — modern .NET encoders can replace this once pixels are available |
-
-### Static-analysis order
-
-1. **TLC initialization worker:** recover its input-state layout and all reads
-   of `initializationFlags`, including `0x40000000`
-   (`INITIALIZE_CSharpClient`). This is the current task; its name is not a
-   behavioural conclusion.
-2. **TLC driver packet layer:** enumerate every call into the packet wrapper,
-   cluster packets by command family, and correlate them with the available
-   FX35 driver source. Start with status/open/close/error paths before motion.
-3. **Scan acquisition state machine:** trace `ScanPictures` through setup,
-   packet issuance, overlapped ring reads, PFS staging, completion, and cancel.
-4. **Host-only post-acquisition path:** framing, save-group state, renderer,
-   then PakonImau/Ansel. This sequence separates scanner safety/protocol work
-   from image-processing research.
-
-### Evidence rules
-
-- A type-library enum name is a label, not proof of its effect.
-- A diagnostic string is a clue, not proof of a reached code path.
-- A driver command becomes a managed candidate only after its exact bytes,
-  response validation, and purpose are recovered.
-- Hardware tests validate a static conclusion; they do not substitute for a
-  documented call chain.
-- **Firmware update is permanently prohibited.** Never pass
-  `INITIALIZE_FirmwareUpdate` (`0x2`) to TLC, issue a firmware packet, or add
-  a firmware-update feature/probe. Static analysis may identify the guarded
-  branch solely to exclude it from the managed implementation.
+A type-library enum name, diagnostic string, or native offset is not a safe
+hardware instruction by itself. In particular, scanner firmware update is
+outside the supported scope: no implementation or probe may issue it.
 
 ## TLX public contract
 
@@ -307,6 +274,37 @@ percentage-style progress. The exact scale for scan and save intermediate
 updates needs a controlled trace, so preserve the raw value alongside a
 normalized progress estimate during migration.
 
+### Observed F-135 Plus full-roll callback sequence
+
+**Confirmed for the baseline Base16, colour-negative, 35 mm, full-roll
+profile.** A successful six-picture scan produced the following callback
+sequence:
+
+```text
+InitializeProgress (0):  0 -> 1000 -> 2000 -> 3000
+ScanProgress       (34): 0
+Operation24        (24): 1000 -> 1010 -> 1020 -> 2000
+Operation20        (20): 1000 -> 2000
+ScanProgress       (34): 1000
+HardwareStatus     (12): entry -> entry+exit -> exit
+ScanProgress       (34): 2000 -> 3000
+SaveProgress       (38): 0 -> 1000 -> 1166 -> 1332 -> 1498
+                         -> 1664 -> 1830 -> 2000 -> 3000
+```
+
+Operations `20` and `24` are confirmed stages of the ordinary scan workflow,
+but their native producers and semantic names are still unknown. They must be
+preserved as raw events rather than presented as user-facing progress labels.
+
+The save values advance by 166 between the start/end markers for this
+six-picture roll. They are therefore useful for progress display only after
+normalization; they are not a documented percentage scale.
+
+During film transport, the observed hardware-status words were
+`0x40000000` (entry sensor), `0xC0000000` (entry and exit sensors), then
+`0x80000000` (exit sensor). A subsequent zero status during rendering shows
+that status callbacks can continue after film motion has ended.
+
 ### Error-code ownership
 
 `ERROR_CODES_000` is a flat numeric namespace, but its numeric ranges identify
@@ -397,6 +395,17 @@ save group: promoted rolls/pictures eligible for rendering
 rendering occurs only when a `SaveTo…` route consumes eligible pictures from the
 save group. `InsertPicture`/`DeletePicture` operate on the framed picture list;
 they are host-side metadata operations and do not alter scanner acquisition.
+
+For the observed baseline roll, scanning created one strip and six pictures in
+the scan group, with raw scan-warning value `3`. Promotion then created one
+save-group roll containing the same one strip and six pictures. The individual
+warning bits are not decoded yet.
+
+An empty scan group is not consistently reported as zero by the public query
+surface: some count queries raise COM error `13` before scanning and after
+promotion. A client should model an empty group explicitly and treat this
+specific query failure as an empty/unsupported count result only when its
+operation context is known.
 
 The next static task is to locate the private record constructors at the end of
 the PFS/framing pipeline. Until then, this public model is the safe contract;
@@ -1460,13 +1469,11 @@ attempt the proprietary classification, flesh, and decision-tree behaviour.
 
 ## Native-analysis tooling
 
-Ghidra 12.1.2 has been used for the current `tlx.dll`, `TLA.dll`, `TLB.dll`,
-and `TLC.dll` analysis. It can decompile the 32-bit native DLLs, follow
-imports/exports and COM vtables, label functions, and preserve an analysis
-project. The important CLSID hand-off is now resolved: `tlx.dll` is the public
-facade and selects `TLC.dll` for `\\.\PakonX35` (FX35), while it selects
-`TLB.dll` for `\\.\Pakon135` (F135). Therefore TLC is the primary static
-analysis target for this scanner. The low-level module map and recovered
+Ghidra can decompile the 32-bit native DLLs, follow imports/exports and COM
+vtables, label functions, and preserve an analysis project. The recovered
+F135 facade hand-off creates `TLA.dll` after probing `\\.\Pakon135`.
+TLC/TLB routines remain comparative evidence only; they are not a substitute
+for TLA when documenting the F135 path. The low-level module map and recovered
 addresses are maintained in `tlx-lowlevel.md`.
 
 Useful companion tools are a debugger with process/module support (x64dbg is

@@ -11,15 +11,23 @@ try
 {
     var options = CliOptions.Parse(args);
     var readStopwatch = System.Diagnostics.Stopwatch.StartNew();
-    await using (var temp = File.Create(tempRawPath))
+    if (!string.IsNullOrWhiteSpace(options.InputPath))
     {
+        File.Copy(options.InputPath, tempRawPath, overwrite: true);
+    }
+    else
+    {
+        await using var temp = File.Create(tempRawPath);
         await Console.OpenStandardInput().CopyToAsync(temp);
     }
     readStopwatch.Stop();
 
     var processStopwatch = System.Diagnostics.Stopwatch.StartNew();
     var processor = new PakonRawProcessor();
-    using var image = processor.ProcessImage(tempRawPath, options.IsBwImage, NormalizeGamma(options.Gamma), options.Contrast, options.Saturation);
+    using var image = processor.ProcessImage(
+        tempRawPath, options.IsBwImage, NormalizeGamma(options.Gamma), options.Contrast,
+        options.Saturation, options.Brightness, options.RedBalance, options.GreenBalance,
+        options.BlueBalance, options.Rotation);
     processStopwatch.Stop();
 
     Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(options.OutputPath))!);
@@ -111,6 +119,8 @@ internal sealed class CliOptions
 {
     public string OutputPath { get; private init; } = "";
 
+    public string? InputPath { get; private init; }
+
     public OutputFormat Format { get; private init; } = OutputFormat.Png;
 
     public bool IsBwImage { get; private init; }
@@ -122,6 +132,16 @@ internal sealed class CliOptions
     public float Saturation { get; private init; } = 1.08f;
 
     public int Quality { get; private init; } = 90;
+
+    public float Brightness { get; private init; } = 1f;
+
+    public float RedBalance { get; private init; } = 1f;
+
+    public float GreenBalance { get; private init; } = 1f;
+
+    public float BlueBalance { get; private init; } = 1f;
+
+    public int Rotation { get; private init; }
 
     public static CliOptions Parse(string[] args)
     {
@@ -158,12 +178,18 @@ internal sealed class CliOptions
         return new CliOptions
         {
             OutputPath = output,
+            InputPath = values.TryGetValue("input", out var input) ? Path.GetFullPath(input) : null,
             Format = ParseFormat(Get(values, "format", "png")),
             IsBwImage = flags.Contains("bw"),
             Gamma = ParseDouble(Get(values, "gamma", "0.4545454545454545"), "--gamma"),
             Contrast = ParseFloat(Get(values, "contrast", "1.08"), "--contrast"),
             Saturation = ParseFloat(Get(values, "saturation", "1.08"), "--saturation"),
-            Quality = ParseInt(Get(values, "quality", "90"), "--quality")
+            Quality = ParseInt(Get(values, "quality", "90"), "--quality"),
+            Brightness = ParseFloat(Get(values, "brightness", "1"), "--brightness"),
+            RedBalance = ParseFloat(Get(values, "red-balance", "1"), "--red-balance"),
+            GreenBalance = ParseFloat(Get(values, "green-balance", "1"), "--green-balance"),
+            BlueBalance = ParseFloat(Get(values, "blue-balance", "1"), "--blue-balance"),
+            Rotation = ParseInt(Get(values, "rotation", "0"), "--rotation")
         };
     }
 

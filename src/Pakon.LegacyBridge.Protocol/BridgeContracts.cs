@@ -15,6 +15,10 @@ namespace Pakon.LegacyBridge.Protocol
         public const string ScanRoll = "scan-roll";
         public const string MoveOldestRollToSaveGroup = "move-oldest-roll-to-save-group";
         public const string SaveFramesToDisk = "save-frames-to-disk";
+        public const string GetFrames = "get-frames";
+        public const string UpdateFrame = "update-frame";
+        public const string RenderFrameToDisk = "render-frame-to-disk";
+        public const string RenderFrameToRaw = "render-frame-to-raw";
         public const string CancelScan = "cancel-scan";
         public const string CancelSave = "cancel-save";
         public const string CloseTlxSession = "close-tlx-session";

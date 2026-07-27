@@ -1,17 +1,19 @@
 # Pakon colour pipeline and Ansel
 
-This is the implementation-facing reference for Pakon colour processing. It
-collects the colour and LUT findings that were previously interleaved with
-transport, COM, and save-worker notes. The complete function/offset evidence
-remains in [tlx-lowlevel.md](tlx-lowlevel.md); the system-level migration
-context remains in [tlx.md](tlx.md).
+This document explains how Pakon turns a decoded film image into its rendered
+output. It is written for readers who know the TLX overview in
+[tlx.md](tlx.md), but do not yet know Pakon's colour terminology.
+
+The complete function/offset evidence remains in
+[tlx-lowlevel.md](tlx-lowlevel.md). This document describes processing stages
+and their dependencies rather than native implementation details.
 
 ## Scope and safety boundary
 
 Colour processing is host-side work. It is not an FX35 driver feature and does
 not send LUTs, scene-balance data, or output adjustments to the scanner. The
 pipeline begins only after raw acquisition data has been decoded into a framed,
-planar image.
+planar image: separate same-sized arrays for each colour component.
 
 Do not call PakonImau exports directly yet. Their exported signatures are
 known, but their long-lived TLA/TLB/TLC host contexts, ownership rules, and
@@ -203,25 +205,26 @@ simple post-deinterleave three-plane container with no row padding; it must
 not be confused with the raw PFS staging format or used to infer PFS packet
 boundaries.
 
-## Controlled modern-film extensions
+## Film-specific configuration
 
-Adding a modern film mapping is technically plausible only in a copied/test
-Ansel data path. Start with an exact product/generation/ISO rule mapped to an
-existing contrast class. A new FUGC LUT also appears structurally supported,
-but requires an existing table shape, a new contrast mapping, and A/B scans.
-This changes only part of the rendering model; SBA, PNR, defaults, and other
-Ansel modules can still depend on product/ISO.
+The configuration format can express an exact product/generation/ISO rule
+mapped to an existing contrast class. It also appears able to load a new FUGC
+LUT when that LUT has the existing table shape and a matching contrast mapping.
+Neither mechanism is a complete film model: SBA, PNR, defaults, and other
+Ansel modules can still depend on product and ISO.
 
-## What remains before an in-house colour port
+## Limits of the recovered colour contract
 
-1. Decode the PFS stream into planar frames.
-2. Recover the colour-host context construction and ownership rules.
-3. Trace scanner metadata through to Ansel scene descriptors.
-4. Reproduce correction-only output against a known Base16 fixture.
-5. Add roll-level Ansel regression tests using diagnostic output and legacy
-   rendered images.
-6. Replace adjustments and file encoding only after intermediate stages match.
+The colour stages cannot yet be reproduced independently because the following
+interfaces are incomplete:
+
+1. PFS span selection, component assignment, sample scale, and frame/strip
+   boundaries before a planar image exists.
+2. PakonImau host-context construction and buffer ownership.
+3. The complete mapping from scanner metadata to an Ansel scene descriptor.
+4. Reproducible intermediate output at correction, scene-balance, and
+   adjustment boundaries.
 
 For exact function addresses, descriptor offsets, and dynamic-host slots, see
-[tlx-lowlevel.md](tlx-lowlevel.md). For scan transport and the migration plan,
-see [tlx.md](tlx.md).
+[tlx-lowlevel.md](tlx-lowlevel.md). For scanner and transport context, see
+[tlx.md](tlx.md).

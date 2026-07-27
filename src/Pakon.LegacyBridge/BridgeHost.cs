@@ -97,6 +97,26 @@ namespace Pakon.LegacyBridge
                     return new BridgeResponse { RequestId = request.RequestId, Succeeded = true, Values = new System.Collections.Generic.Dictionary<string, string>(tlxWorker.Invoke(() => tlxSession.SaveFramesToDisk(request.Arguments))) };
                 }
 
+                if (request.Operation == BridgeOperations.GetFrames)
+                {
+                    return new BridgeResponse { RequestId = request.RequestId, Succeeded = true, Values = new System.Collections.Generic.Dictionary<string, string>(tlxWorker.Invoke(() => tlxSession.GetFrames())) };
+                }
+
+                if (request.Operation == BridgeOperations.UpdateFrame)
+                {
+                    return new BridgeResponse { RequestId = request.RequestId, Succeeded = true, Values = new System.Collections.Generic.Dictionary<string, string>(tlxWorker.Invoke(() => tlxSession.UpdateFrame(request.Arguments))) };
+                }
+
+                if (request.Operation == BridgeOperations.RenderFrameToDisk)
+                {
+                    return new BridgeResponse { RequestId = request.RequestId, Succeeded = true, Values = new System.Collections.Generic.Dictionary<string, string>(tlxWorker.Invoke(() => tlxSession.RenderFrameToDisk(request.Arguments))) };
+                }
+
+                if (request.Operation == BridgeOperations.RenderFrameToRaw)
+                {
+                    return new BridgeResponse { RequestId = request.RequestId, Succeeded = true, Values = new System.Collections.Generic.Dictionary<string, string>(tlxWorker.Invoke(() => tlxSession.RenderFrameToRaw(request.Arguments))) };
+                }
+
                 if (request.Operation == BridgeOperations.CancelScan)
                 {
                     return new BridgeResponse { RequestId = request.RequestId, Succeeded = true, Values = new System.Collections.Generic.Dictionary<string, string>(tlxWorker.Invoke(() => tlxSession.CancelScan())) };

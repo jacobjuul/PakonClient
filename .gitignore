@@ -4,3 +4,4 @@ pakontest3/publish
 /src/*.suo
 src/ConsoleClient/ConsoleClient.csproj.user
 src/.vs/*
+/.vs/
