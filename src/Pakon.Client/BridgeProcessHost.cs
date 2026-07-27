@@ -10,6 +10,8 @@ internal sealed class BridgeProcessHost : IDisposable
     public void EnsureStarted()
     {
         if (process is { HasExited: false }) return;
+        process?.Dispose();
+        process = null;
         var bridge = FindBridge();
         var dotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "dotnet", "dotnet.exe");
         if (!File.Exists(dotnet)) throw new FileNotFoundException("The 32-bit .NET runtime is required.", dotnet);
@@ -22,6 +24,18 @@ internal sealed class BridgeProcessHost : IDisposable
             Verb = "runas",
             WindowStyle = ProcessWindowStyle.Normal
         }) ?? throw new InvalidOperationException("Could not start the Pakon legacy bridge.");
+    }
+
+    public void RestartOwnedOrStart()
+    {
+        if (process is { HasExited: false })
+        {
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit(3000);
+        }
+        process?.Dispose();
+        process = null;
+        EnsureStarted();
     }
 
     public static string FindRawConverter()

@@ -23,20 +23,29 @@ namespace Pakon.LegacyBridge
 
         public int Run()
         {
-            Console.WriteLine("Pakon legacy bridge (x86) listening on pipe '{0}'.", pipeName);
-            do
+            try
             {
-                using (var pipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.None))
+                Console.WriteLine("Pakon legacy bridge (x86) listening on pipe '{0}'.", pipeName);
+                do
                 {
-                    pipe.WaitForConnection();
-                    var request = PipeJson.Read<BridgeRequest>(pipe);
-                    Console.WriteLine("[{0:O}] request {1} ({2})", DateTime.UtcNow, request == null ? "<missing>" : request.Operation, request == null ? "" : request.RequestId);
-                    var response = Dispatch(request);
-                    Console.WriteLine("[{0:O}] response {1}: succeeded={2}; error={3}", DateTime.UtcNow, request == null ? "<missing>" : request.Operation, response.Succeeded, response.Error ?? "");
-                    PipeJson.Write(pipe, response);
+                    using (var pipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.None))
+                    {
+                        pipe.WaitForConnection();
+                        var request = PipeJson.Read<BridgeRequest>(pipe);
+                        Console.WriteLine("[{0:O}] request {1} ({2})", DateTime.UtcNow, request == null ? "<missing>" : request.Operation, request == null ? "" : request.RequestId);
+                        var response = Dispatch(request);
+                        Console.WriteLine("[{0:O}] response {1}: succeeded={2}; error={3}", DateTime.UtcNow, request == null ? "<missing>" : request.Operation, response.Succeeded, response.Error ?? "");
+                        PipeJson.Write(pipe, response);
+                    }
                 }
+                while (!once);
             }
-            while (!once);
+            catch (IOException exception)
+            {
+                Console.Error.WriteLine("Could not open bridge pipe '{0}': {1}", pipeName, exception.Message);
+                Console.Error.WriteLine("Another Pakon legacy bridge may already be running.");
+                return 3;
+            }
 
             return 0;
         }

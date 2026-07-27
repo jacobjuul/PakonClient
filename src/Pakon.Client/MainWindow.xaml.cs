@@ -15,6 +15,13 @@ namespace Pakon.Client;
 
 public partial class MainWindow : Window
 {
+    private enum FilmKind
+    {
+        ColorNegative,
+        ColorPositive,
+        BlackAndWhite
+    }
+
     private readonly LegacyBridgeClient bridge = new();
     private readonly BridgeProcessHost bridgeHost = new();
     private readonly ObservableCollection<FrameItem> frames = [];
@@ -26,10 +33,16 @@ public partial class MainWindow : Window
     private bool scannerReady;
     private bool updatingSliders;
     private bool closing;
+    private FilmKind activeFilmKind = FilmKind.ColorNegative;
 
     private bool IsBlackAndWhite => BlackWhiteRadio.IsChecked == true;
     private bool IsColorNegative => ColorNegativeRadio.IsChecked == true;
     private bool IsPositiveSlide => ColorPositiveRadio.IsChecked == true;
+    private bool ActiveBlackAndWhite => activeFilmKind == FilmKind.BlackAndWhite;
+    private bool ActiveColorNegative => activeFilmKind == FilmKind.ColorNegative;
+    // TLX's C-41 color-processing flags already produce a positive image for color
+    // negatives. Only B&W negative output still needs software inversion.
+    private bool ActiveRequiresSoftwareInversion => activeFilmKind == FilmKind.BlackAndWhite;
     private int PageCount => Math.Max(1, (frames.Count + 8) / 9);
     private IEnumerable<FrameItem> SelectedFrames => frames.Where(x => x.IsSelected);
 
@@ -75,10 +88,33 @@ public partial class MainWindow : Window
         SetConnection("Initializing scanner…", "#C59134");
         try
         {
-            bridgeHost.EnsureStarted();
-            await Task.Delay(450);
-            var status = await RequireSuccess(bridge.GetTlxSessionStatusAsync());
-            if (!status.Values.TryGetValue("state", out var state) || state == "Closed")
+            BridgeResponse? status = null;
+            using (var existingBridgeTimeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(800)))
+            {
+                try
+                {
+                    status = await RequireSuccess(bridge.GetTlxSessionStatusAsync(existingBridgeTimeout.Token));
+                }
+                catch (OperationCanceledException) { }
+                catch (IOException) { }
+            }
+
+            if (status == null)
+            {
+                bridgeHost.EnsureStarted();
+                await Task.Delay(450);
+                status = await RequireSuccess(bridge.GetTlxSessionStatusAsync());
+            }
+
+            var state = status.Values.GetValueOrDefault("state", "Closed");
+            if (state is "Faulted" or "Scanning" or "CancellingScan")
+            {
+                await RecoverFromInterruptedScanAsync();
+                if (scannerReady) return;
+                throw new InvalidOperationException("The previous scan did not release the scanner.");
+            }
+
+            if (state == "Closed")
                 await RequireSuccess(bridge.InitializeTlxSessionAsync());
             await PollUntilReadyAsync("Initializing scanner", CancellationToken.None, TimeSpan.FromMinutes(4));
             scannerReady = true;
@@ -101,6 +137,11 @@ public partial class MainWindow : Window
     {
         if (!scannerReady) return;
         SaveSettings();
+        activeFilmKind = IsColorNegative
+            ? FilmKind.ColorNegative
+            : IsPositiveSlide
+                ? FilmKind.ColorPositive
+                : FilmKind.BlackAndWhite;
         ShowPage(ScanningPage);
         ProgressTitle.Text = "Scanning your roll";
         ScanStatusText.Text = "The scanner is finding and capturing each frame.";
@@ -108,9 +149,9 @@ public partial class MainWindow : Window
         operationCancellation = new CancellationTokenSource();
         try
         {
-            var filmColor = IsColorNegative
+            var filmColor = ActiveColorNegative
                 ? 1
-                : ColorPositiveRadio.IsChecked == true
+                : activeFilmKind == FilmKind.ColorPositive
                     ? 2
                     : IceCheckBox.IsChecked == true ? 8 : 4;
             var scanControl = IceCheckBox.IsChecked == true ? 0x08 : 0;
@@ -123,21 +164,145 @@ public partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
-            ShowPage(SetupPage);
+            await RecoverFromInterruptedScanAsync();
         }
         catch (Exception ex)
         {
             var message = ex.Message;
-            if (IceCheckBox.IsChecked == true &&
+            var tailFirst = IsFilmTailFirstError(message);
+            if (tailFirst)
+            {
+                message = "The film was inserted tail first.\n\n" +
+                    "Remove the film, turn the strip around, and insert the leader/head end first. " +
+                    "The scanner is being returned to its ready state so you can try again.";
+            }
+            else if (IceCheckBox.IsChecked == true &&
                 (message.Contains("COMException: 15", StringComparison.OrdinalIgnoreCase) ||
                  message.Contains("invalid parameter", StringComparison.OrdinalIgnoreCase)))
             {
                 message += "\n\nThe scanner rejected the Digital ICE acquisition option. Disable Digital ICE and retry the scan.";
             }
-            MessageBox.Show(message, "Scan failed", MessageBoxButton.OK, MessageBoxImage.Error);
-            ShowPage(SetupPage);
+
+            await RecoverFromInterruptedScanAsync();
+            MessageBox.Show(
+                message,
+                tailFirst ? "Film inserted tail first" : "Scan failed",
+                MessageBoxButton.OK,
+                tailFirst ? MessageBoxImage.Warning : MessageBoxImage.Error);
+        }
+        finally
+        {
+            operationCancellation?.Dispose();
+            operationCancellation = null;
+            ProgressCancelButton.IsEnabled = true;
         }
     }
+
+    private async Task RecoverFromInterruptedScanAsync()
+    {
+        ProgressCancelButton.Visibility = Visibility.Collapsed;
+        StartScanButton.IsEnabled = false;
+        scannerReady = false;
+        ShowPage(SetupPage);
+        SetConnection("Recovering scanner…", "#C59134");
+
+        try
+        {
+            var status = await GetBridgeStatusWithTimeoutAsync();
+            var state = status.Values.GetValueOrDefault("state", "Unknown");
+            if (state != "Ready")
+            {
+                try
+                {
+                    using var cancelTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                    await bridge.CancelScanAsync(cancelTimeout.Token);
+                }
+                catch { }
+            }
+
+            var started = Stopwatch.StartNew();
+            while (started.Elapsed < TimeSpan.FromSeconds(20))
+            {
+                status = await GetBridgeStatusWithTimeoutAsync();
+                state = status.Values.GetValueOrDefault("state", "Unknown");
+                if (state == "Ready")
+                {
+                    scannerReady = true;
+                    StartScanButton.IsEnabled = true;
+                    SetConnection("Scanner ready", "#2D7356");
+                    return;
+                }
+                await Task.Delay(300);
+            }
+
+            await RestartBridgeAndScannerAsync();
+        }
+        catch
+        {
+            try
+            {
+                await RestartBridgeAndScannerAsync();
+            }
+            catch
+            {
+                scannerReady = false;
+                StartScanButton.IsEnabled = false;
+                SetConnection("Scanner unavailable", "#B44131");
+            }
+        }
+    }
+
+    private async Task<BridgeResponse> GetBridgeStatusWithTimeoutAsync()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        return await RequireSuccess(bridge.GetTlxSessionStatusAsync(timeout.Token));
+    }
+
+    private async Task RestartBridgeAndScannerAsync()
+    {
+        SetConnection("Restarting scanner bridge…", "#C59134");
+        bridgeHost.RestartOwnedOrStart();
+        await Task.Delay(600);
+
+        var status = await GetBridgeStatusWithTimeoutAsync();
+        var state = status.Values.GetValueOrDefault("state", "Closed");
+        if (state != "Closed")
+        {
+            using var closeTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+            await RequireSuccess(bridge.CloseTlxSessionAsync(closeTimeout.Token));
+        }
+
+        using (var initializeTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(4)))
+        {
+            await RequireSuccess(bridge.InitializeTlxSessionAsync(cancellationToken: initializeTimeout.Token));
+        }
+
+        var started = Stopwatch.StartNew();
+        while (started.Elapsed < TimeSpan.FromSeconds(65))
+        {
+            status = await GetBridgeStatusWithTimeoutAsync();
+            state = status.Values.GetValueOrDefault("state", "Unknown");
+            if (state == "Ready")
+            {
+                scannerReady = true;
+                StartScanButton.IsEnabled = true;
+                SetConnection("Scanner ready", "#2D7356");
+                return;
+            }
+            if (state == "Faulted")
+            {
+                throw new InvalidOperationException(
+                    status.Values.GetValueOrDefault("failure", "Scanner initialization failed."));
+            }
+            await Task.Delay(350);
+        }
+
+        throw new TimeoutException("The scanner bridge did not become ready after restarting.");
+    }
+
+    private static bool IsFilmTailFirstError(string message) =>
+        message.Contains("film tail first", StringComparison.OrdinalIgnoreCase) ||
+        message.Contains("0xE0000000", StringComparison.OrdinalIgnoreCase);
 
     private async Task LoadFramesAndPreviewsAsync(CancellationToken cancellationToken)
     {
@@ -170,8 +335,8 @@ public partial class MainWindow : Window
                 $"preview-{frame.Index:000}-{Guid.NewGuid():N}.jpg");
             frame.Preview = await ImageAdjustmentService.CreatePreviewAsync(
                 frame,
-                !IsPositiveSlide,
-                IsBlackAndWhite,
+                ActiveRequiresSoftwareInversion,
+                ActiveBlackAndWhite,
                 adjustedPath);
             frames.Add(frame);
         }
@@ -218,7 +383,8 @@ public partial class MainWindow : Window
     private void ShowReviewPage()
     {
         ShowPage(ReviewPage);
-        ColorBalancePanel.Visibility = IsBlackAndWhite ? Visibility.Collapsed : Visibility.Visible;
+        ColorBalancePanel.Visibility = ActiveBlackAndWhite ? Visibility.Collapsed : Visibility.Visible;
+        UpdateColorBalanceLabels();
         UpdateReviewSummary();
         FooterText.Text = "Review · Select frames to edit together";
     }
@@ -248,9 +414,10 @@ public partial class MainWindow : Window
         updatingSliders = true;
         BrightnessSlider.Value = first.Brightness;
         ContrastSlider.Value = first.Contrast;
-        RedSlider.Value = first.RedBalance;
-        GreenSlider.Value = first.GreenBalance;
-        BlueSlider.Value = first.BlueBalance;
+        var colorDirection = ActiveColorNegative ? -1 : 1;
+        RedSlider.Value = first.RedBalance * colorDirection;
+        GreenSlider.Value = first.GreenBalance * colorDirection;
+        BlueSlider.Value = first.BlueBalance * colorDirection;
         updatingSliders = false;
     }
 
@@ -261,11 +428,12 @@ public partial class MainWindow : Window
         {
             frame.Brightness = BrightnessSlider.Value;
             frame.Contrast = ContrastSlider.Value;
-            if (!IsBlackAndWhite)
+            if (!ActiveBlackAndWhite)
             {
-                frame.RedBalance = RedSlider.Value;
-                frame.GreenBalance = GreenSlider.Value;
-                frame.BlueBalance = BlueSlider.Value;
+                var colorDirection = ActiveColorNegative ? -1 : 1;
+                frame.RedBalance = RedSlider.Value * colorDirection;
+                frame.GreenBalance = GreenSlider.Value * colorDirection;
+                frame.BlueBalance = BlueSlider.Value * colorDirection;
             }
         }
         adjustmentTimer.Stop();
@@ -283,8 +451,8 @@ public partial class MainWindow : Window
         var path = Path.Combine(sessionDirectory, $"adjusted-{frame.Index:000}-{Guid.NewGuid():N}.jpg");
         frame.Preview = await ImageAdjustmentService.CreatePreviewAsync(
             frame,
-            !IsPositiveSlide,
-            IsBlackAndWhite,
+            ActiveRequiresSoftwareInversion,
+            ActiveBlackAndWhite,
             path);
     }
 
@@ -478,8 +646,8 @@ public partial class MainWindow : Window
             "--red-balance", Factor(frame.RedBalance), "--green-balance", Factor(frame.GreenBalance),
             "--blue-balance", Factor(frame.BlueBalance), "--rotation", frame.Rotation.ToString(CultureInfo.InvariantCulture)
         };
-        if (IsBlackAndWhite) args.Insert(1, "--bw");
-        if (!IsPositiveSlide) args.Insert(1, "--invert");
+        if (ActiveBlackAndWhite) args.Insert(1, "--bw");
+        if (ActiveRequiresSoftwareInversion) args.Insert(1, "--invert");
         var startInfo = new ProcessStartInfo
         {
             FileName = "dotnet",
@@ -503,13 +671,13 @@ public partial class MainWindow : Window
             render.Values["outputPath"],
             outputPath,
             frame,
-            !IsPositiveSlide,
-            IsBlackAndWhite);
+            ActiveRequiresSoftwareInversion,
+            ActiveBlackAndWhite);
     }
 
     private int NativeSaveControl(bool includeLowResolution)
     {
-        var value = IsColorNegative ? 0x74 : 0x04;
+        var value = ActiveColorNegative ? 0x74 : 0x04;
         if (IceCheckBox.IsChecked == true) value |= 0x80;
         if (includeLowResolution) value |= 0x08;
         return value;
@@ -542,17 +710,31 @@ public partial class MainWindow : Window
         return path;
     }
 
-    private async void CancelScanClicked(object sender, RoutedEventArgs e)
+    private void CancelScanClicked(object sender, RoutedEventArgs e)
     {
-        operationCancellation?.Cancel();
-        try { await bridge.CancelScanAsync(); } catch { }
+        if (operationCancellation == null || ProgressCancelButton.IsEnabled == false) return;
+        ProgressCancelButton.IsEnabled = false;
+        ScanStatusText.Text = "Cancelling scan…";
+        operationCancellation.Cancel();
     }
 
     private void FilmTypeChanged(object sender, RoutedEventArgs e)
     {
         if (ColorBalancePanel != null && ReviewPage.Visibility == Visibility.Visible)
-            ColorBalancePanel.Visibility = IsBlackAndWhite ? Visibility.Collapsed : Visibility.Visible;
+            ColorBalancePanel.Visibility = ActiveBlackAndWhite ? Visibility.Collapsed : Visibility.Visible;
+        UpdateColorBalanceLabels();
         UpdateBwIceNotice();
+    }
+
+    private void UpdateColorBalanceLabels()
+    {
+        if (RedBalanceLabel == null) return;
+        var colorNegative = ReviewPage.Visibility == Visibility.Visible
+            ? ActiveColorNegative
+            : IsColorNegative;
+        RedBalanceLabel.Text = colorNegative ? "Cyan" : "Red";
+        GreenBalanceLabel.Text = colorNegative ? "Magenta" : "Green";
+        BlueBalanceLabel.Text = colorNegative ? "Yellow" : "Blue";
     }
 
     private void IceSelectionChanged(object sender, RoutedEventArgs e) => UpdateBwIceNotice();

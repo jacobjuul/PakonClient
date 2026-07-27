@@ -183,11 +183,11 @@
                         <Slider x:Name="ContrastSlider" Minimum="-50" Maximum="50" ValueChanged="AdjustmentChanged"/>
                         <StackPanel x:Name="ColorBalancePanel">
                             <TextBlock Text="Color balance" FontWeight="SemiBold" Margin="0,6,0,4"/>
-                            <TextBlock Text="Red" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                            <TextBlock x:Name="RedBalanceLabel" Text="Red" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
                             <Slider x:Name="RedSlider" Minimum="-35" Maximum="35" ValueChanged="AdjustmentChanged"/>
-                            <TextBlock Text="Green" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                            <TextBlock x:Name="GreenBalanceLabel" Text="Green" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
                             <Slider x:Name="GreenSlider" Minimum="-35" Maximum="35" ValueChanged="AdjustmentChanged"/>
-                            <TextBlock Text="Blue" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                            <TextBlock x:Name="BlueBalanceLabel" Text="Blue" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
                             <Slider x:Name="BlueSlider" Minimum="-35" Maximum="35" ValueChanged="AdjustmentChanged"/>
                         </StackPanel>
                         <Button Content="Reset adjustments" Style="{StaticResource SecondaryButton}" Padding="12,8"
@@ -237,7 +237,7 @@
                     <StackPanel x:Name="PostSaveActionsPanel" Visibility="Collapsed" Margin="0,14,0,0">
                         <Button Content="Open output folder" Style="{StaticResource SecondaryButton}"
                                 Margin="0,0,0,8" Click="OpenOutputFolderClicked"/>
-                        <Button Content="Scan another roll" Background="{StaticResource GreenBrush}"
+                        <Button Content="Scan a new roll / strip" Background="{StaticResource GreenBrush}"
                                 Click="ScanAnotherRollClicked"/>
                     </StackPanel>
                 </StackPanel>
