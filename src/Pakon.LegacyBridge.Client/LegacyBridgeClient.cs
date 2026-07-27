@@ -82,6 +82,38 @@ public sealed class LegacyBridgeClient
             ["colorBits"] = colorBits.ToString(CultureInfo.InvariantCulture)
         }, cancellationToken);
 
+    public Task<BridgeResponse> GetFramesAsync(CancellationToken cancellationToken = default) =>
+        SendAsync(BridgeOperations.GetFrames, cancellationToken);
+
+    public Task<BridgeResponse> UpdateFrameAsync(int index, string fileName, string directory, int rotation, bool selected, CancellationToken cancellationToken = default) =>
+        SendAsync(BridgeOperations.UpdateFrame, new Dictionary<string, string>
+        {
+            ["index"] = index.ToString(CultureInfo.InvariantCulture),
+            ["fileName"] = fileName,
+            ["directory"] = directory,
+            ["rotation"] = rotation.ToString(CultureInfo.InvariantCulture),
+            ["selected"] = selected.ToString(CultureInfo.InvariantCulture)
+        }, cancellationToken);
+
+    public Task<BridgeResponse> RenderFrameToDiskAsync(int index, string outputPath, int saveControl, int width, int height, int quality = 95, CancellationToken cancellationToken = default) =>
+        SendAsync(BridgeOperations.RenderFrameToDisk, new Dictionary<string, string>
+        {
+            ["index"] = index.ToString(CultureInfo.InvariantCulture),
+            ["outputPath"] = outputPath,
+            ["saveControl"] = saveControl.ToString(CultureInfo.InvariantCulture),
+            ["width"] = width.ToString(CultureInfo.InvariantCulture),
+            ["height"] = height.ToString(CultureInfo.InvariantCulture),
+            ["quality"] = quality.ToString(CultureInfo.InvariantCulture)
+        }, cancellationToken);
+
+    public Task<BridgeResponse> RenderFrameToRawAsync(int index, string outputPath, int saveControl, CancellationToken cancellationToken = default) =>
+        SendAsync(BridgeOperations.RenderFrameToRaw, new Dictionary<string, string>
+        {
+            ["index"] = index.ToString(CultureInfo.InvariantCulture),
+            ["outputPath"] = outputPath,
+            ["saveControl"] = saveControl.ToString(CultureInfo.InvariantCulture)
+        }, cancellationToken);
+
     public Task<BridgeResponse> CancelScanAsync(CancellationToken cancellationToken = default) =>
         SendAsync(BridgeOperations.CancelScan, cancellationToken);
 

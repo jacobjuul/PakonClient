@@ -1,22 +1,37 @@
-# TLX native low-level notes
+# Pakon low-level reference
 
-This is the evidence ledger for static reverse engineering. It is intentionally
-specific: function labels, offsets, CLSIDs/IIDs, packet bytes, registry paths,
-and confidence boundaries belong here. Practical implementation guidance lives
-in [tlx.md](tlx.md); the organised colour reference lives in
-[tlx-colour.md](tlx-colour.md).
+This document records the native interfaces beneath TLX: COM identities,
+driver endpoints, packet envelopes, memory layouts, PFS staging, and the
+PakonImau host boundary. It is intended for a developer who already
+understands the software overview in [tlx.md](tlx.md) and needs the supporting
+evidence for a specific implementation question.
+
+It is deliberately precise. Native function labels, offsets, GUIDs, packet
+bytes, and registry paths are evidence, not public API names. The colour
+pipeline is explained in [tlx-colour.md](tlx-colour.md).
 
 ## Reading guide
 
-| Evidence area | Sections |
+| Question | Start with |
 | --- | --- |
 | Direct TLC ABI and initialization | **Direct TLC initialization**, **TLC `InitializeScanner` execution path**, **scanner-information dispatch boundary** |
-| Driver endpoint and packet transport | **Driver endpoint opening**, **TLB / F135 comparison**, **normal-startup packet family**, **PPB interrupt status** |
+| Driver endpoint and packet transport | **Driver endpoint opening**, **backend packet comparison**, **normal-startup packet family**, **PPB interrupt status** |
 | Colour/Ansel ABI evidence | **PakonImau colour entry points** through **PakonImau dynamic-host ABI** |
 | TLX backend selection and raw staging | **TLX facade and TLA/TLB/TLC implementation selection** and **PFS / driver pipeline addresses** |
 
-Colour evidence remains here so its source is not lost, but new explanatory
-colour documentation should be written in `tlx-colour.md`.
+This document does not attempt to narrate a scan from first principles; use
+`tlx.md` for that context before relying on an isolated offset or packet.
+
+## Backend scope
+
+The observed F-135 facade path creates **TLA**. This document also contains
+TLC and TLB evidence because those binaries preserve comparable interfaces and
+often make a shared native contract easier to identify. Such evidence is
+labelled with its source backend and is not automatically an F-135 fact.
+
+For an F-135 implementation, rely on TLA evidence or on behaviour explicitly
+confirmed as shared. Treat a packet or state transition found only in TLC or
+TLB as an unverified comparison, not an instruction to send it to the scanner.
 
 ## Direct TLC initialization and callback ABI (type-library evidence)
 
@@ -131,36 +146,18 @@ names and hypotheses separate from the implementation guidance in `tlx.md`.
   validated with a scan trace.
 - **Unknown:** do not implement from this note alone.
 
-## How these findings support the .NET 10 migration
+## Implementation boundary
 
-The intended end state is a managed .NET 10 scanner application with no
-runtime COM requirement. This document is the evidence ledger for that work:
-it records exactly what a managed/native compatibility boundary must preserve
-while the old algorithms are still used.
+The low-level evidence supports two separate implementation boundaries:
 
-The migration has two distinct compatibility layers:
-
-| Layer | Near-term role | Long-term result |
+| Boundary | Established contract | Limit |
 | --- | --- | --- |
-| FX35 driver transport | Managed `CreateFile` / `DeviceIoControl` / asynchronous bulk read, using only packets whose bytes and effects have been recovered. | Fully managed scanner acquisition; no TLX/TLC COM dependency. |
-| PakonImau / Ansel image processing | Temporary native bridge that recreates the host contexts, buffer adapters, roll lifecycle, and config selection needed by the installed algorithms. | Managed colour, roll-scene balance, adjustment, and output components with regression-tested behaviour. |
+| FX35 driver transport | `CreateFile`, `DeviceIoControl`, and overlapped bulk reads can be modelled once the relevant packet bytes and effects are confirmed. | Do not issue an active scanner command based only on a native label or offset. |
+| PakonImau / Ansel processing | Export names, call sites, and portions of the host ABI are known. | The required host contexts, buffer ownership, and initialization are incomplete; direct managed calls are not supported. |
 
-`tlx.dll`, TLA, TLB, and TLC are valuable behavioural references and may be
-used in isolated test harnesses. They must not define the public API of the
-new app. In particular, a legacy name, bit mask, or native offset is not a
-license to expose an unclear managed setting: promote it into the new API only
-after this file and `tlx.md` establish its observable meaning and required
-pipeline stage.
-
-The current native PakonImau exports must **not** be called from C# yet. Their
-owning TLC host constructs private contexts and adapters that are only partly
-recovered. The documented function-pointer table, renderer call sites, and
-Ansel descriptors are the route to removing that limitation safely.
-
-The active implementation of the first layer is `src\Pakon.Transport` in the
-new root `Pakon.sln`. Its .NET 10 CLI deliberately performs only the confirmed
-driver metadata IOCTL. The prior x86 experiment is preserved under
-`src\Legacy\PakonTransportProbe`; it is not the location for new work.
+`tlx.dll`, TLA, TLB, and TLC remain useful behavioural references, but their
+names and offsets must not become a new application's public API. Promote a
+native concept only after its observable meaning and pipeline stage are clear.
 
 ## Driver endpoint opening (TLC + driver-source evidence)
 
@@ -177,8 +174,8 @@ CreateFileW("\\.\PakonX35",
 ```
 
 It retains the handle and reports a TLC `CreateFile` error on failure. It does
-not send an IOCTL or packet itself. The equivalent F135 backend is TLB and
-uses `\\.\Pakon135`; endpoint names are case-insensitive on Windows.
+not send an IOCTL or packet itself. The observed F135 backend is TLA and uses
+`\\.\Pakon135`; endpoint names are case-insensitive on Windows.
 
 The available FX35 driver source independently establishes the names at
 `FX35USB/driver/FX35USB.cpp`: an F135 build publishes `PAKON135`, an F335
@@ -187,24 +184,23 @@ build publishes `PAKONX35`, and the F235 build publishes `LOOPBACK`. Its
 completes successfully. Therefore opening a handle is safe for endpoint
 discovery; scanner state first changes only at a later IOCTL/packet stage.
 
-The current diagnostic probes deliberately use synchronous handles because
-they issue one short, completed request. A future managed acquisition
-transport must use `FILE_FLAG_OVERLAPPED`, matching TLC, for its long-lived
-bulk-read/ring handle. Do not interpret a successful `CreateFile` as scanner
-initialization or readiness.
+Short, read-only diagnostic probes may use a synchronous handle. Acquisition
+uses `FILE_FLAG_OVERLAPPED`, matching the native bulk-read/ring path. Do not
+interpret a successful `CreateFile` as scanner initialization or readiness.
 
-## TLB / F135 comparison (static-code evidence)
+## Backend packet comparison (static-code evidence)
 
-The real F135 path is TLB, so TLC cannot be treated as the authoritative
-startup sequence. The comparison so far proves:
+TLC and TLB contain related packet wrappers and startup routines. They are
+useful comparative evidence, but neither sequence identifies the observed
+F135 facade path: that path creates TLA. The comparison proves:
 
-| Item | TLC / X35 | TLB / F135 | Result |
+| Item | TLC / X35 | TLB | Result |
 | --- | --- | --- | --- |
-| Device path | `\\.\PakonX35` | `\\.\Pakon135` | Backend-specific endpoint only. |
+| Device path string | `\\.\PakonX35` | `\\.\Pakon135` | Backend-specific endpoint evidence only. |
 | Handle options | read/write, share read/write, `OPEN_EXISTING`, normal + overlapped | Same | Shared transport-open contract. |
 | Packet transport | `IOCTL 0x222090`, 36-byte reply, overlapped completion, 2-second wait | Same | Shared packet envelope. |
 | First post-open packet | `04 03 10 00 85` | `04 03 10 00 85` | Shared first setup command. |
-| Subsequent startup | TLC follows with its type-`01` `10 02 03` query | TLB conditionally writes one byte to `10 8F`, with 100-ms waits and later status probes | Not equivalent; do not replay TLC startup for F135. |
+| Subsequent startup | TLC follows with its type-`01` `10 02 03` query | TLB conditionally writes one byte to `10 8F`, with 100-ms waits and later status probes | Different native state machines; neither sequence is authorised for replay. |
 
 TLB's extra sequence is now structurally classified, though its device effect
 is still unknown. `TLB!FUN_10009ba0` builds a type-`02` one-byte write through
@@ -222,9 +218,8 @@ It subsequently tries type-`04` status queries at addresses `44`, `46`, `24`,
 and `26`; it accepts a type-`07` response as the affirmative result. These
 are normal-startup state operations, **not** safe diagnostic commands.
 
-They remain excluded from the managed transport. The direct replacement must
-use a model-specific startup state machine until their state fields and device
-effects have been compared with a controlled legacy trace.
+Their state fields and device effects are not decoded. They are excluded from
+diagnostic and direct-driver commands.
 
 ### First post-open initialization packet
 
@@ -243,10 +238,7 @@ the usual overlapped 36-byte response handling and retry/error machinery.
 
 This is the first command after opening, but it is **not** classified as
 read-only or safe. Its name and hardware effect have not been recovered; it
-must not be sent by `Pakon.Transport` or a diagnostic probe. The next static
-step is to follow its response parser and the subsequent initialization calls
-to identify whether it is a configuration read, mode change, or another
-stateful setup operation.
+must not be sent by `Pakon.Transport` or a diagnostic probe.
 
 ### Recovered normal-startup packet family (TLC)
 
@@ -267,8 +259,7 @@ additional packet *families* but not yet their safe effects:
 | `FUN_1000e1d0(..., 0x38, 0x0f, ...)` | `02 04 38 01 0B 0F` before an associated read | Firmware/software information exchange. It is analysis-only and must never be confused with the permanently prohibited firmware-update path. |
 | `FUN_1000d7c0(..., 0x38, 0x95, ..., 7, ...)` | Type `01`, address `38`, length `07`, followed by a seven-byte response copy | Reads an initialization information block. |
 
-These are a static packet inventory, not authorization to transmit them. They
-make the next comparison against TLB precise.
+These are a static packet inventory, not authorization to transmit them.
 
 ## TLC scanner-information dispatch boundary
 
@@ -294,14 +285,12 @@ containing the getter's logic. Therefore we have **not** established that
 status query. It may simply expose state/configuration loaded during scanner
 initialization.
 
-Do not add a `ReadScannerIdentity` method to `Pakon.Transport` from this API
-yet. The next trace must identify a TLC operation that reaches the recovered
-`IOCTL_PAKON_SEND_AND_RECEIVE_PACKET` wrapper, then capture and validate that
-specific request/response contract before the managed transport exposes it.
+Do not derive a direct-driver `ReadScannerIdentity` operation from this API.
+The dispatch method's relationship to a hardware request is unconfirmed.
 
-## First recovered direct-driver status query: PPB interrupt status
+## Recovered direct-driver status query: PPB interrupt status
 
-That next trace is now complete. `TLC!FUN_1000c800` is the FX35 packet wrapper:
+`TLC!FUN_1000c800` is the FX35 packet wrapper:
 it calls `IOCTL_PAKON_SEND_AND_RECEIVE_PACKET` (`0x222090`) with an input size
 of `packet[1] + 2`, a fixed 36-byte response buffer, and a two-second wait. It
 accepts response types `1`, `3`, and `7`; types `1` and `3` must equal the
@@ -325,6 +314,23 @@ is required. It is now exposed only as the explicit
 part of automatic endpoint detection. The managed result retains the full
 36-byte buffer because the installed driver returns a zero byte count even
 when the buffer contains the valid packet above.
+
+### Boundary with TLX hardware callbacks
+
+The one-byte PPB interrupt query above must not be confused with TLX callback
+operation `12`/`13`'s 32-bit hardware-status word. Observed transport-sensor
+values include `0x40000000`, `0xC0000000`, and `0x80000000`; TLX can report
+`EC_HardwareFault (135)` from `FN_uiDriverPollPPB` with `0xE0000000`. This
+proves the backend poller accumulates/derives higher-level state beyond the
+single `SS` byte exposed by packet `03 01 10`. Do not infer a direct bit-for-bit
+managed mapping from that read-only packet.
+
+### Observed PFS I/O behaviour
+
+Passive FileIO observation corroborates the static result that `PFS00.bin` is
+a reusable staging store with later consumers, not an append-only raw capture
+file. The ETW record has file operation sizes and timing only; it does not
+expose PFS offsets, data bytes, driver packets, or per-frame ownership.
 
 ## Colour and Ansel evidence
 
@@ -427,7 +433,7 @@ silently even when `Exlax` is set correctly. Run the COM client elevated for
 this one diagnostic scan, or pre-create `C:\test.txt` with write permission
 for the client account.
 
-### Runtime Ansel trace: `docs/ansel-diag-example.txt`
+### Observed Ansel diagnostic output
 
 **Confirmed runtime observations from an attached six-scene C-41 diagnostic:**
 
@@ -500,12 +506,12 @@ PakonImau ABI remains unknown because this x86 indirect call is not recovered
 cleanly by the decompiler; do not infer the image-buffer layout from these
 offsets yet.
 
-Most importantly, the actual FX35 backend contains the same branch:
+TLC contains the same branch:
 `TLC!FUN_1002f2a0` calls its PakonImau host at `+0x64` when the same renderer
 state bit `0x20` is set. Its surrounding flow, temporary `0x60`-byte buffer,
 source/destination field preparation, replacement-on-success behaviour, and
-post-balance rotation path all match the TLA routine. Thus this conclusion is
-now confirmed for the scanner in scope, rather than inferred from TLA alone.
+post-balance rotation path all match the TLA routine. This corroborates the
+host-side renderer architecture; F135-specific backend selection remains TLA.
 
 #### TLA temporary image-buffer object used by scene balance
 
@@ -529,13 +535,6 @@ PakonImau. This buffer object is **not necessarily identical** to the public
 Ansel scene descriptor: TLA prepares temporary stack fields before the
 indirect call, so it likely adapts the buffer plus the scene metadata into the
 descriptor consumed by `PIAnselColorSceneBalancePlanar`.
-
-This has not been enabled on the installed system. A future controlled test
-may set the value for one short scan, preserve the generated `C:\test.txt`,
-then restore/remove the value. It changes diagnostics only according to the
-recovered code, but it is still an installed-machine registry modification and
-must be treated as a reversible experiment rather than normal application
-behaviour.
 
 ### TLA colour-host layout (partial)
 
@@ -583,14 +582,15 @@ The recovered backend probes are deliberately simple and safe to observe:
 
 | Detected device | Backend COM class created by `tlx.dll` | Registered server | Evidence |
 | --- | --- | --- | --- |
-| `\\.\Pakon135` | `{52B5538B-7926-40AD-9DBE-810228E147AD}` (`TLB.TLAMain.1`) | `TLB.dll` | `tlx!FUN_10005bcc` opens the device with read/write access and shared read/write, immediately closes it, then calls `CoCreateInstance` for this CLSID. |
+| `\\.\Pakon135` | `{52B5538B-7926-40AD-9DBE-810228E147AD}` (`TLAMain Class`) | `TLA.dll` | `tlx!FUN_10005bcc` opens the device with read/write access and shared read/write, immediately closes it, then calls `CoCreateInstance` for this CLSID. |
 | `\\.\PakonX35` | `{6449DE65-60A9-4A45-A3A1-337F5E6B41E0}` (`TLC.TLAMain.1`) | `TLC.dll` | `tlx!FUN_10007aa4` uses the same probe/close/create pattern. |
 
 Both backend-creation functions query the same family of interfaces after
 creation (main, scan, save, calibration and related interfaces) and install a
 small wrapper object. They do not issue scanner commands as part of the probe.
-This establishes that an FX35 client goes through **TLC**, not TLB, once the
-public `TLXMainClass` has been constructed.
+For the observed F135 endpoint, this establishes that a public
+`TLXMainClass` call is handed to **TLA** after the endpoint probe. The X35
+probe has a separate TLC hand-off.
 
 `TLA.dll`, `TLB.dll`, and `TLC.dll` each export only the standard four COM
 entry points (`DllCanUnloadNow`, `DllGetClassObject`, `DllRegisterServer`, and
@@ -601,19 +601,18 @@ and PakonImau—so the earlier assumption that TLB was merely a configuration
 module was wrong. They are closely related backend builds, not separate
 configuration-only libraries.
 
-Their registration and device strings currently support this working model:
+The recovered facade hand-off and native registration establish this model:
 
 | Module | COM ProgID | Device/backend clue | Status |
 | --- | --- | --- | --- |
-| `TLA.dll` | `TLA.TLAMain.1` | contains `\\.\Loopback` | likely simulation/loopback backend; direct selection path not yet recovered. |
-| `TLB.dll` | `TLB.TLAMain.1` | contains `\\.\Pakon135`; selected by the recovered F135 probe | confirmed F135 backend. |
-| `TLC.dll` | `TLC.TLAMain.1` | contains `\\.\Pakonx35`; selected by the recovered X35 probe | confirmed FX35 backend. |
+| `TLA.dll` | `TLA.TLAMain.1` | Created by the recovered F135 facade hand-off; contains F135 acquisition and PFS code. | Confirmed backend for the observed F135 path. |
+| `TLB.dll` | `TLB.TLAMain.1` | Contains `\\.\Pakon135` strings and a parallel packet implementation. | Related backend; selection condition not established. |
+| `TLC.dll` | `TLC.TLAMain.1` | Contains `\\.\PakonX35` and a parallel packet implementation. | Related backend; selection condition not established for this hardware. |
 
 The DLLs are not byte-identical (installed sizes: TLA 593,920 bytes, TLB
-536,576 bytes, TLC 614,400 bytes), so implementation differences must still
-be treated as meaningful. For future work, use TLC as the primary static
-analysis target for this scanner, then compare individual routines against TLA
-only where TLA already has clearer decompilation.
+536,576 bytes, TLC 614,400 bytes), so implementation differences are
+meaningful. F135 conclusions should be based on TLA or on an explicitly shared
+contract, not inferred from a similarly named TLB/TLC routine.
 
 ## PFS / driver pipeline addresses (TLA.dll)
 
@@ -628,7 +627,7 @@ only where TLA already has clearer decompilation.
 The PFS path retains raw staged bytes; it contains no image decode, colour
 conversion, or compression.
 
-### Raw line staging shape (new static trace)
+### Raw line staging shape
 
 `TLA!FUN_100393a0` configures the scan-to-PFS worker and makes one important
 fact explicit: it uses **three** 16-bit components per scan-line unit in the
@@ -657,11 +656,11 @@ all four components are conventional RGB+IR pixels at this point. The packet
 framing, channel order, 12-bit packing, and frame/strip boundary rules remain
 unrecovered and must not be guessed from this layout alone.
 
-### PFS-to-planar deinterleaver (recovered)
+### PFS-to-planar deinterleaver
 
-The next PFS consumer is now identified. `FUN_100071d0` reads a selected raw
-span through `FUN_10007010`/`FUN_100065e0`, then calls `FUN_10004d60` when the
-read completes. `FUN_10004d60` is a line-oriented deinterleaver:
+`FUN_100071d0` reads a selected raw span through
+`FUN_10007010`/`FUN_100065e0`, then calls `FUN_10004d60` when the read
+completes. `FUN_10004d60` is a line-oriented deinterleaver:
 
 - It treats the PFS input as 16-bit sample units and copies every component
   sample into a distinct contiguous plane.

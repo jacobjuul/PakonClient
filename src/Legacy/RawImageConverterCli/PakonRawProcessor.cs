@@ -6,7 +6,10 @@ internal sealed class PakonRawProcessor
 {
     public string LastTiming { get; private set; } = "";
 
-    public Image<Rgb48> ProcessImage(string filename, bool isBwImage, double gamma, float contrast, float saturation)
+    public Image<Rgb48> ProcessImage(
+        string filename, bool isBwImage, bool invertImage, double gamma, float contrast, float saturation,
+        float brightness = 1f, float redBalance = 1f, float greenBalance = 1f,
+        float blueBalance = 1f, int rotation = 0)
     {
         var readStopwatch = System.Diagnostics.Stopwatch.StartNew();
         var header = new byte[16];
@@ -59,15 +62,43 @@ internal sealed class PakonRawProcessor
         loadStopwatch.Stop();
 
         var adjustStopwatch = System.Diagnostics.Stopwatch.StartNew();
-        if (isBwImage)
+        if (invertImage)
         {
             image.Mutate(x => x.Invert());
+        }
+
+        if (isBwImage)
+        {
             image.Mutate(x => x.Saturate(0f));
         }
-        else
+
+        image.Mutate(x => x.Contrast(contrast));
+        if (!isBwImage)
         {
-            image.Mutate(x => x.Contrast(contrast));
             image.Mutate(x => x.Saturate(saturation));
+        }
+        image.Mutate(x => x.Brightness(Math.Clamp(brightness, 0.1f, 2f)));
+        if (!isBwImage)
+        {
+            image.ProcessPixelRows(accessor =>
+            {
+                for (var y = 0; y < accessor.Height; y++)
+                {
+                    var row = accessor.GetRowSpan(y);
+                    for (var x = 0; x < row.Length; x++)
+                    {
+                        ref var pixel = ref row[x];
+                        pixel.R = (ushort)Math.Clamp(pixel.R * redBalance, 0, ushort.MaxValue);
+                        pixel.G = (ushort)Math.Clamp(pixel.G * greenBalance, 0, ushort.MaxValue);
+                        pixel.B = (ushort)Math.Clamp(pixel.B * blueBalance, 0, ushort.MaxValue);
+                    }
+                }
+            });
+        }
+        var normalizedRotation = ((rotation % 360) + 360) % 360;
+        if (normalizedRotation != 0)
+        {
+            image.Mutate(x => x.Rotate(normalizedRotation));
         }
         adjustStopwatch.Stop();
 
