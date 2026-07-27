@@ -470,7 +470,7 @@ namespace Pakon.LegacyBridge
                     {
                         ReleaseRawBuffers();
                     }
-                    else if (status != 0 && status != 1000 && status != 2000)
+                    else if (status != 0 && status != 1000)
                     {
                         WriteCompletedRawBuffer();
                         RegisterNextRawBuffer();

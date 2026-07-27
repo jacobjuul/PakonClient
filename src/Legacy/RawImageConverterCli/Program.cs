@@ -25,7 +25,7 @@ try
     var processStopwatch = System.Diagnostics.Stopwatch.StartNew();
     var processor = new PakonRawProcessor();
     using var image = processor.ProcessImage(
-        tempRawPath, options.IsBwImage, NormalizeGamma(options.Gamma), options.Contrast,
+        tempRawPath, options.IsBwImage, options.InvertImage, NormalizeGamma(options.Gamma), options.Contrast,
         options.Saturation, options.Brightness, options.RedBalance, options.GreenBalance,
         options.BlueBalance, options.Rotation);
     processStopwatch.Stop();
@@ -125,6 +125,8 @@ internal sealed class CliOptions
 
     public bool IsBwImage { get; private init; }
 
+    public bool InvertImage { get; private init; }
+
     public double Gamma { get; private init; } = 0.4545454545454545;
 
     public float Contrast { get; private init; } = 1.08f;
@@ -156,7 +158,8 @@ internal sealed class CliOptions
             }
 
             var key = arg.Substring(2);
-            if (string.Equals(key, "bw", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(key, "bw", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(key, "invert", StringComparison.OrdinalIgnoreCase))
             {
                 flags.Add(key);
                 continue;
@@ -181,6 +184,7 @@ internal sealed class CliOptions
             InputPath = values.TryGetValue("input", out var input) ? Path.GetFullPath(input) : null,
             Format = ParseFormat(Get(values, "format", "png")),
             IsBwImage = flags.Contains("bw"),
+            InvertImage = flags.Contains("invert") || flags.Contains("bw"),
             Gamma = ParseDouble(Get(values, "gamma", "0.4545454545454545"), "--gamma"),
             Contrast = ParseFloat(Get(values, "contrast", "1.08"), "--contrast"),
             Saturation = ParseFloat(Get(values, "saturation", "1.08"), "--saturation"),

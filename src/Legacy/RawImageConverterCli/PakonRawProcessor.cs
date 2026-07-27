@@ -7,7 +7,7 @@ internal sealed class PakonRawProcessor
     public string LastTiming { get; private set; } = "";
 
     public Image<Rgb48> ProcessImage(
-        string filename, bool isBwImage, double gamma, float contrast, float saturation,
+        string filename, bool isBwImage, bool invertImage, double gamma, float contrast, float saturation,
         float brightness = 1f, float redBalance = 1f, float greenBalance = 1f,
         float blueBalance = 1f, int rotation = 0)
     {
@@ -62,14 +62,19 @@ internal sealed class PakonRawProcessor
         loadStopwatch.Stop();
 
         var adjustStopwatch = System.Diagnostics.Stopwatch.StartNew();
-        if (isBwImage)
+        if (invertImage)
         {
             image.Mutate(x => x.Invert());
+        }
+
+        if (isBwImage)
+        {
             image.Mutate(x => x.Saturate(0f));
         }
-        else
+
+        image.Mutate(x => x.Contrast(contrast));
+        if (!isBwImage)
         {
-            image.Mutate(x => x.Contrast(contrast));
             image.Mutate(x => x.Saturate(saturation));
         }
         image.Mutate(x => x.Brightness(Math.Clamp(brightness, 0.1f, 2f)));

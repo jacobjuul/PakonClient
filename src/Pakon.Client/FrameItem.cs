@@ -20,7 +20,10 @@ public sealed class FrameItem : INotifyPropertyChanged
     public required int FrameNumber { get; init; }
     public required string FrameName { get; init; }
     public required string SourcePath { get; set; }
-    public string DisplayName => string.IsNullOrWhiteSpace(FrameName) ? $"Frame {FrameNumber:00}" : FrameName;
+    public bool HasUsableDxName =>
+        !string.IsNullOrWhiteSpace(FrameName) &&
+        !string.Equals(FrameName.Trim(), "DX_ERROR", StringComparison.OrdinalIgnoreCase);
+    public string DisplayName => HasUsableDxName ? FrameName : $"Frame {FrameNumber:00}";
     public bool IsIncluded { get => isIncluded; set => Set(ref isIncluded, value); }
     public bool IsSelected { get => isSelected; set => Set(ref isSelected, value); }
     public int Rotation { get => rotation; set => Set(ref rotation, ((value % 360) + 360) % 360); }

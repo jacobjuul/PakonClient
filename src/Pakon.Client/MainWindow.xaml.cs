@@ -29,6 +29,7 @@ public partial class MainWindow : Window
 
     private bool IsBlackAndWhite => BlackWhiteRadio.IsChecked == true;
     private bool IsColorNegative => ColorNegativeRadio.IsChecked == true;
+    private bool IsPositiveSlide => ColorPositiveRadio.IsChecked == true;
     private int PageCount => Math.Max(1, (frames.Count + 8) / 9);
     private IEnumerable<FrameItem> SelectedFrames => frames.Where(x => x.IsSelected);
 
@@ -164,7 +165,14 @@ public partial class MainWindow : Window
             {
                 if (args.PropertyName == nameof(FrameItem.IsIncluded)) UpdateReviewSummary();
             };
-            frame.Preview = ImageAdjustmentService.LoadUnlocked(sourcePath);
+            var adjustedPath = Path.Combine(
+                sessionDirectory,
+                $"preview-{frame.Index:000}-{Guid.NewGuid():N}.jpg");
+            frame.Preview = await ImageAdjustmentService.CreatePreviewAsync(
+                frame,
+                !IsPositiveSlide,
+                IsBlackAndWhite,
+                adjustedPath);
             frames.Add(frame);
         }
         page = 0;
@@ -273,7 +281,11 @@ public partial class MainWindow : Window
     private async Task RefreshFramePreviewAsync(FrameItem frame)
     {
         var path = Path.Combine(sessionDirectory, $"adjusted-{frame.Index:000}-{Guid.NewGuid():N}.jpg");
-        frame.Preview = await ImageAdjustmentService.CreatePreviewAsync(frame, IsBlackAndWhite, path);
+        frame.Preview = await ImageAdjustmentService.CreatePreviewAsync(
+            frame,
+            !IsPositiveSlide,
+            IsBlackAndWhite,
+            path);
     }
 
     private async void RotateLeftClicked(object sender, RoutedEventArgs e)
@@ -388,6 +400,7 @@ public partial class MainWindow : Window
             SaveProgress.Visibility = Visibility.Collapsed;
             SaveStatusText.Text = "";
             PostSaveActionsPanel.Visibility = Visibility.Collapsed;
+            SaveButton.Visibility = Visibility.Visible;
             scannerReady = true;
             StartScanButton.IsEnabled = true;
             SetConnection("Scanner ready", "#2D7356");
@@ -416,6 +429,7 @@ public partial class MainWindow : Window
         var included = frames.Where(x => x.IsIncluded).ToArray();
         var usePng = Png16Radio.IsChecked == true;
         SaveButton.IsEnabled = false;
+        SaveButton.Visibility = Visibility.Visible;
         SaveProgress.Visibility = Visibility.Visible;
         SaveProgress.Maximum = included.Length;
         SaveProgress.Value = 0;
@@ -436,8 +450,8 @@ public partial class MainWindow : Window
             }
             SaveStatusText.Text = $"Saved {included.Length} frames";
             FooterText.Text = $"Complete · {outputDirectory}";
+            SaveButton.Visibility = Visibility.Collapsed;
             PostSaveActionsPanel.Visibility = Visibility.Visible;
-            MessageBox.Show($"{included.Length} frames saved to:\n{outputDirectory}", "Export complete", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
@@ -465,6 +479,7 @@ public partial class MainWindow : Window
             "--blue-balance", Factor(frame.BlueBalance), "--rotation", frame.Rotation.ToString(CultureInfo.InvariantCulture)
         };
         if (IsBlackAndWhite) args.Insert(1, "--bw");
+        if (!IsPositiveSlide) args.Insert(1, "--invert");
         var startInfo = new ProcessStartInfo
         {
             FileName = "dotnet",
@@ -484,7 +499,12 @@ public partial class MainWindow : Window
         var sourceRequest = Path.Combine(sessionDirectory, $"full-source-{frame.Index:000}.jpg");
         var render = await RequireSuccess(bridge.RenderFrameToDiskAsync(frame.Index, sourceRequest, NativeSaveControl(false) & ~0x04, 0, 0, 100));
         await PollUntilReadyAsync($"Rendering {frame.DisplayName}", CancellationToken.None, TimeSpan.FromMinutes(5));
-        await ImageAdjustmentService.SaveJpegAsync(render.Values["outputPath"], outputPath, frame, IsBlackAndWhite);
+        await ImageAdjustmentService.SaveJpegAsync(
+            render.Values["outputPath"],
+            outputPath,
+            frame,
+            !IsPositiveSlide,
+            IsBlackAndWhite);
     }
 
     private int NativeSaveControl(bool includeLowResolution)
@@ -499,7 +519,9 @@ public partial class MainWindow : Window
 
     private static string BuildOutputStem(string prefix, FrameItem frame, int sequence)
     {
-        var baseName = string.IsNullOrWhiteSpace(frame.FrameName) ? sequence.ToString("000", CultureInfo.InvariantCulture) : frame.FrameName.Trim();
+        var baseName = !frame.HasUsableDxName
+            ? sequence.ToString("000", CultureInfo.InvariantCulture)
+            : frame.FrameName.Trim();
         baseName = SanitizeFilePart(Path.GetFileNameWithoutExtension(baseName));
         if (string.IsNullOrWhiteSpace(baseName)) baseName = sequence.ToString("000", CultureInfo.InvariantCulture);
         prefix = SanitizeFilePart(prefix.Trim());
